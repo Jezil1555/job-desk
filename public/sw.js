@@ -1,5 +1,5 @@
-// Job Desk service worker: caches the app shell so it opens instantly and offline.
-const CACHE = "jobdesk-v1";
+// Job Desk service worker: offline app shell + phone push notifications.
+const CACHE = "jobdesk-v2";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/app.js", "/config.js", "/manifest.webmanifest",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
@@ -20,11 +20,39 @@ self.addEventListener("fetch", e => {
   if (url.hostname.endsWith("supabase.co")) return; // data always goes to the network
   const isShell = url.origin === location.origin || url.hostname === "cdn.jsdelivr.net" || url.hostname.includes("fonts.g");
   if (!isShell) return;
-  // network first for our own files (so updates land), cache fallback when offline
   e.respondWith(
     fetch(e.request).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request).then(r => r || caches.match("/index.html")))
   );
+});
+
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "Job Desk", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Job Desk", {
+    body: d.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    tag: d.tag || undefined,
+    renotify: !!d.tag,
+    data: { url: d.url || "/" }
+  }));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of all) {
+      if (new URL(c.url).origin === location.origin) {
+        await c.focus();
+        c.postMessage({ type: "open", url });
+        return;
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
 });
