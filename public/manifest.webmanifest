@@ -1,13 +1,13 @@
 {
   "name": "Job Desk",
   "short_name": "Job Desk",
-  "description": "Tasks and progress updates across all your projects.",
-  "start_url": "/#/today",
+  "description": "Personal command centre for tasks, projects, follow-ups and businesses.",
+  "start_url": "/#/home",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#17202b",
-  "theme_color": "#17202b",
+  "background_color": "#151c26",
+  "theme_color": "#151c26",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },

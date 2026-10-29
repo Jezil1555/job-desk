@@ -1,0 +1,9 @@
+{
+  "name": "job-desk",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "check": "for f in public/js/*.js public/js/*/*.js public/sw.js; do node --check \"$f\" || exit 1; done"
+  }
+}

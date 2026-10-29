@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Job Desk</title>
-  <meta name="description" content="Tasks and progress updates across all your projects.">
-  <meta name="theme-color" content="#17202b">
+  <meta name="description" content="Personal command centre for tasks, projects, follow-ups and businesses.">
+  <meta name="theme-color" content="#151c26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,49 +15,38 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div id="boot" class="boot"><img src="/icons/icon-192.png" alt="" width="72" height="72"></div>
-
-  <!-- Signed-out -->
+  <div id="boot" class="boot"><img src="/icons/icon-192.png" alt="" width="64" height="64"></div>
   <main id="auth" class="auth" hidden></main>
 
-  <!-- Signed-in -->
   <div id="app" class="app" hidden>
-    <header class="topbar">
-      <div class="topbar-in">
-        <button class="iconbtn back" id="backBtn" aria-label="Back" hidden>
-          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
-        </button>
-        <h1 id="pageTitle">Today</h1>
-        <div class="topbar-actions" id="topActions"></div>
-      </div>
-    </header>
-    <div id="offline" class="offline" hidden>You're offline. Changes will fail until you reconnect.</div>
-    <main id="view" class="view"></main>
-    <button class="fab" id="fab" aria-label="Add task">
-      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
-    <nav class="tabbar" aria-label="Main">
-      <a href="#/home" data-tab="home"><svg viewBox="0 0 24 24"><path d="M4 20V10l8-6 8 6v10"/><path d="M9.5 20v-5.5h5V20"/></svg><span>Dashboard</span></a>
-      <a href="#/tasks" data-tab="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg><span>My tasks</span></a>
-      <a href="#/projects" data-tab="projects"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="7" height="7" rx="1.5"/><rect x="13.5" y="4" width="7" height="7" rx="1.5"/><rect x="3.5" y="14" width="7" height="7" rx="1.5"/><rect x="13.5" y="14" width="7" height="7" rx="1.5"/></svg><span>Projects</span></a>
-      <a href="#/alerts" data-tab="alerts"><span class="tabicon"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15L6 16z"/><path d="M10 20.5a2 2 0 004 0"/></svg><b class="badge" id="alertBadge" hidden></b></span><span>Alerts</span></a>
-      <a href="#/me" data-tab="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.3-3.6 4.2-5.4 7.5-5.4s6.2 1.8 7.5 5.4"/></svg><span>Me</span></a>
-    </nav>
+    <aside class="sidenav" id="sidenav" aria-label="Sidebar"></aside>
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-in">
+          <img class="tb-logo" src="/icons/icon-192.png" alt="" width="26" height="26">
+          <h1 class="tb-title" id="pageTitle">Command Centre</h1>
+          <form class="tb-search" id="topSearchForm" role="search"><span aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></span><input id="topsearch" placeholder="Search everything  /" autocomplete="off" aria-label="Search"></form>
+          <a class="iconbtn tb-searchbtn" href="#/search" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></a>
+          <a class="iconbtn bell" href="#/alerts" aria-label="Alerts"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/></svg><b id="bellCount" hidden></b></a>
+          <button class="btn primary tb-capture" data-act="capture"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Capture</button>
+        </div>
+      </header>
+      <div id="offline" class="offline" hidden>You're offline. Changes can't be saved until you reconnect.</div>
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+    <nav class="bottomnav" id="bottomnav" aria-label="Main"></nav>
   </div>
 
-  <div id="sheetWrap" class="sheet-wrap" hidden>
-    <div class="sheet-backdrop" data-act="close-sheet"></div>
-    <section class="sheet" id="sheet" role="dialog" aria-modal="true"></section>
-  </div>
-
+  <div id="sheetWrap" class="sheet-wrap" hidden><div class="sheet-backdrop" id="sheetBackdrop"></div><section class="sheet" id="sheet" role="dialog" aria-modal="true"></section></div>
+  <div id="dialog" class="dialog-wrap" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
   <script src="/config.js"></script>
-  <script src="/app.js"></script>
+  <script type="module" src="/js/main.js"></script>
 </body>
 </html>

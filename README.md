@@ -1,12 +1,21 @@
-# Job Desk
+# Job Desk — personal command centre
 
-Personal task and progress tracker across projects (D'Lusso & Mediate, QCLOUD, Fitness Hub, The Burgery, and any you add). Installable on iPhone and Android as a home-screen app.
+Tasks, projects, follow-ups and (later) finances across QCloud, Dlusso, Fitness Hub, The Burgery and personal life. Installable on iPhone and Android.
 
-- **Frontend:** plain HTML/CSS/JS in `public/`, no build step. Installable PWA with offline app shell.
-- **Backend:** Supabase project `job-desk` (Mumbai). Tables `projects`, `tasks`, `task_updates`, all with row-level security so each login only sees its own rows. Live sync via Supabase Realtime.
-- **Hosting:** Render static site, publishes `public/`. Auto-deploys on push to `main`.
+- **Live:** https://job-desk-u8nj.onrender.com
+- **Frontend:** plain ES modules in `public/` (no build step), installable PWA, push notifications.
+- **Backend:** Supabase project `job-desk` — Postgres with row-level security, Auth, Realtime, Edge Function `send-push`, pg_cron reminders.
+- **Hosting:** Render static site, auto-deploys on push to `main`.
 
-## Changing things
+## Docs
+- `docs/RULES.md` — task, project, follow-up, reminder and access rules
+- `docs/IMPLEMENTATION_LOG.md` — what changed, what was verified, open issues
 
-- Supabase URL and public key live in `public/config.js`.
-- After changing app files, bump `CACHE` in `public/sw.js` so installed phones pick up the new version.
+## Development
+```bash
+npm test                                  # unit tests (rules, time zones)
+npm run check                             # syntax-check every module
+npm i --no-save @supabase/supabase-js@2.45.4 && python3 tests/e2e/run.py   # UI end-to-end (needs Python Playwright)
+psql "$DATABASE_URL" -f supabase/tests/phase1_tests.sql                      # database tests (rolled back)
+```
+Migrations live in `supabase/migrations/` and are applied in order. After changing app files, bump `CACHE` in `public/sw.js` so installed phones update.
