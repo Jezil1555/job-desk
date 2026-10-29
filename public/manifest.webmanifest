@@ -1,0 +1,16 @@
+{
+  "name": "Job Desk",
+  "short_name": "Job Desk",
+  "description": "Tasks and progress updates across all your projects.",
+  "start_url": "/#/today",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#17202b",
+  "theme_color": "#17202b",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
