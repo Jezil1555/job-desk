@@ -58,11 +58,15 @@ def fresh_db():
                         "direction": "they_owe", "last_contact_at": "2026-10-26", "expected_at": "2026-10-27", "next_follow_up_at": iso(now - dt.timedelta(hours=2)), "escalate_at": None,
                         "status": "open", "notes": None, "document_url": None, "owner_id": ME, "created_by": ME, "closed_at": None, "created_at": iso(now), "updated_at": iso(now)}],
         "contacts": [], "notifications": [{"id": str(uuid.uuid4()), "user_id": ME, "kind": "overdue", "title": "Overdue: Follow up with supplier", "body": "QCLOUD", "url": "/#/t/t-over", "task_id": "t-over", "follow_up_id": None, "read_at": None, "created_at": iso(now)}],
-        "task_comments": [], "activity": [], "follow_up_logs": [], "task_contacts": [], "push_subscriptions": []
+        "task_comments": [], "activity": [], "follow_up_logs": [], "task_contacts": [], "push_subscriptions": [],
+        "notes": [{"id": "n-dec", "workspace_id": WS[1], "kind": "decision", "title": "Use sea freight for KSA lane", "body": "", "tags": ["ksa"], "meeting_date": None, "attendees": None,
+                   "decision": "Move KSA shipments to sea freight", "rationale": "Cost", "decision_status": "proposed", "decided_on": None, "pinned": False, "created_by": ME, "created_at": iso(now - dt.timedelta(days=2)), "updated_at": iso(now - dt.timedelta(days=2))}],
+        "documents": [], "record_links": [], "goals": [], "goal_updates": [], "habits": [], "habit_logs": [], "health_logs": [], "weekly_reviews": []
     }
 
 DB = fresh_db()
 REQUESTS = []
+STORAGE = {}
 
 def health():
     out = []
@@ -95,11 +99,22 @@ def handle(route):
     def reply(body, status=200): route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
     def err(msg): reply({"code": "P0001", "message": msg, "details": None, "hint": None}, 400)
     if path.startswith("/auth/v1/"): return reply({"id": ME, "email": "jezz@example.com"})
+    if path.startswith("/storage/v1/object/sign/documents/"):
+        key = unquote(path.split("/storage/v1/object/sign/documents/")[1])
+        if key not in STORAGE: return reply({"statusCode": "404", "error": "not_found", "message": "Object not found"}, 400)
+        return reply({"signedURL": f"/object/sign/documents/{key}?token=test"})
+    if path.startswith("/storage/v1/object/documents/") and req.method == "POST":
+        key = unquote(path.split("/storage/v1/object/documents/")[1]); STORAGE[key] = len(req.post_data_buffer or b"")
+        return reply({"Key": "documents/" + key, "Id": str(uuid.uuid4())})
+    if path == "/storage/v1/object/documents" and req.method == "DELETE":
+        for k in json.loads(req.post_data or "{}").get("prefixes", []): STORAGE.pop(k, None)
+        return reply([])
     if path.startswith("/rest/v1/rpc/"):
         fn = path.rsplit("/", 1)[1]; body = json.loads(req.post_data or "{}")
         if fn == "search_all":
             q = body.get("q", "").lower()
-            return reply([{"kind": "task", "id": t["id"], "title": t["title"], "subtitle": "", "workspace_id": t["workspace_id"]} for t in DB["tasks"] if q in t["title"].lower()])
+            return reply([{"kind": "task", "id": t["id"], "title": t["title"], "subtitle": "", "workspace_id": t["workspace_id"]} for t in DB["tasks"] if q in t["title"].lower()] +
+                         [{"kind": "note", "id": n["id"], "title": n["title"], "subtitle": "", "workspace_id": n["workspace_id"]} for n in DB["notes"] if q in (n["title"] + " " + (n["body"] or "")).lower()])
         if fn == "reopen_task":
             t = next(t for t in DB["tasks"] if t["id"] == body["p_task"]); t["status"] = body["p_status"]; t["completed_at"] = None
             DB["task_comments"].append({"id": str(uuid.uuid4()), "task_id": t["id"], "author_id": ME, "body": "Reopened: " + body["p_reason"], "kind": "status", "created_at": iso(dt.datetime.now(dt.timezone.utc))})
@@ -130,7 +145,12 @@ def handle(route):
                 e = rule_check(it)
                 if e: return err(e)
             else:
-                it = {"id": str(uuid.uuid4()), "created_at": iso(dt.datetime.now(dt.timezone.utc)), "author_id": ME, "created_by": ME, **it}
+                stamp = iso(dt.datetime.now(dt.timezone.utc))
+                it = {"id": str(uuid.uuid4()), "created_at": stamp, "updated_at": stamp, "author_id": ME, "created_by": ME, "user_id": ME, **it}
+                if table == "notes": it = {"tags": [], "pinned": False, "deleted_at": None, "decision_status": "proposed", **it}
+                if table == "habits": it = {"days": [0, 1, 2, 3, 4, 5, 6], "per_week": 1, "archived": False, "sort": 0, **it}
+                if table == "documents": it = {"tags": [], "deleted_at": None, "category": "other", **it}
+                if table == "weekly_reviews" and "on_conflict" in qs: rows[:] = [r for r in rows if r["week_start"] != it["week_start"]]
             if table == "push_subscriptions": rows[:] = [r for r in rows if r.get("endpoint") != it.get("endpoint")]
             rows.append(it); out.append(it)
         return reply(out[0] if single else out, 201)
@@ -272,6 +292,103 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/finance"); page.wait_for_selector(".planned")
     check("finance page is honest about not being built", "Not built yet" in page.inner_text("#view"))
 
+    # ---------- Phase 2: notes, meetings, decisions ----------
+    check("goals, notes and reports are no longer marked 'coming soon'", page.locator(".sidenav nav a.soon").count() == 1)
+    page.goto(BASE + "/#/notes/meetings"); page.wait_for_selector(".empty")
+    page.click('.page-head [data-act="new-note"]'); page.wait_for_selector("#noteForm")
+    page.select_option("#nf-ws", WS[1])
+    page.fill("#nf-title", "Weekly logistics review")
+    page.fill("#nf-body", "Discussed delays.\n- [ ] Send revised PO to supplier @Adil\n- [x] Invoice already sent\nAction: book inspection slot")
+    page.click("#nfSave"); page.wait_for_timeout(500)
+    mtg = next((n for n in DB["notes"] if n["title"] == "Weekly logistics review"), None)
+    check("meeting note saved with kind=meeting and today's date", mtg and mtg["kind"] == "meeting" and mtg["meeting_date"])
+    page.click('[data-act="note-actions"]'); page.wait_for_selector(".actions-review")
+    check("action items proposed for review (done item skipped)", page.locator(".actions-review li").count() == 2)
+    check("@Adil mapped to the workspace member", page.input_value("#ai-owner-0") == ADIL)
+    before = len(DB["tasks"])
+    page.click('[data-act="ai-create"]'); page.wait_for_timeout(900)
+    made = DB["tasks"][before:]
+    check("reviewed action items became tasks, with no invented deadlines", len(made) == 2 and all(t["due_at"] is None and t["follow_up_at"] is None for t in made), str(made))
+    check("new tasks linked back to the meeting", sum(1 for l in DB["record_links"] if l["from_type"] == "note" and l["from_id"] == (mtg or {}).get("id") and l["to_type"] == "task") == 2)
+    shot(page, "10-meeting-note")
+    page.keyboard.press("Escape")
+    page.goto(BASE + "/#/notes/decisions"); page.wait_for_selector(".note-row")
+    check("pending decision shown in the decision log", "Pending" in page.inner_text("#view") and "1 decision pending" in page.inner_text(".page-head"))
+    page.click('.page-head [data-act="new-note"]'); page.wait_for_selector("#noteForm")
+    page.fill("#nf-title", "Switch forwarder"); page.click("#nfSave"); page.wait_for_selector(".toast.error")
+    check("decision requires the decision text", "decision" in page.inner_text("#toast").lower() and not any(n["title"] == "Switch forwarder" for n in DB["notes"]))
+    page.keyboard.press("Escape")
+
+    # ---------- documents: attach to a task, open via signed link, delete ----------
+    page.goto(BASE + "/#/tasks/all"); page.wait_for_selector(".list")
+    page.click('.trow[data-id="t-crit"]'); page.wait_for_selector("#tf-title")
+    page.click('[data-act="task-tab"][data-tab="plan"]'); page.wait_for_selector(".kpanel")
+    page.set_input_files('input[data-act="attach-file"]', files=[{"name": "Booking confirmation #44.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4 test"}])
+    page.wait_for_selector('.kpanel .krow', timeout=5000)
+    doc = next((d for d in DB["documents"] if d["title"].startswith("Booking confirmation")), None)
+    check("file uploaded to private storage under its workspace folder", doc and doc["storage_path"].startswith(WS[1] + "/") and doc["storage_path"] in STORAGE, str(doc))
+    check("stored file name is sanitised", doc and doc["storage_path"].endswith("/Booking_confirmation_44.pdf"))
+    check("document linked to the task", any(l["from_type"] == "document" and l["to_type"] == "task" and l["to_id"] == "t-crit" for l in DB["record_links"]))
+    page.click('.kpanel [data-act="open-doc"]'); page.wait_for_selector('[data-act="doc-open"]')
+    page.context.route(re.compile(r"https://.*\.supabase\.co/storage/v1/object/sign/.*"), lambda r: r.fulfill(body="signed file", content_type="text/plain"))
+    with page.context.expect_page() as pop: page.click('[data-act="doc-open"]')
+    popup = pop.value
+    for _ in range(30):
+        if "/object/sign/" in popup.url: break
+        popup.wait_for_timeout(100)
+    check("document opens through an expiring signed link", "/object/sign/documents/" in popup.url and "token=" in popup.url, popup.url)
+    popup.close()
+    page.click('[data-act="doc-delete"]'); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(500)
+    check("deleting a document removes the stored file and the record", doc and doc["storage_path"] not in STORAGE and not DB["documents"])
+    page.keyboard.press("Escape")
+
+    # ---------- habits, goals, health (private) ----------
+    page.goto(BASE + "/#/goals/habits"); page.wait_for_selector(".empty")
+    check("goals page states data is private", "Private to you" in page.inner_text(".page-head"))
+    page.click('.page-head [data-act="habit-new"]'); page.fill("#hb-title", "Gym"); page.click("#hbSave"); page.wait_for_selector(".hgrid")
+    page.click('.habits [data-act="habit-toggle"]'); page.wait_for_timeout(400)
+    check("ticking a habit logs today's check-in", len(DB["habit_logs"]) == 1)
+    check("streak shows 1 after first check-in", "🔥 1" in page.inner_text(".hgrid"))
+    page.click('.habits [data-act="habit-toggle"]'); page.wait_for_timeout(400)
+    check("unticking removes the check-in", len(DB["habit_logs"]) == 0)
+    check("future days cannot be ticked", page.locator(".hcell:disabled").count() == page.evaluate("6 - new Date(new Date().toLocaleString('en-US', {timeZone: 'Asia/Qatar'})).getDay()"))
+    shot(page, "11-habits")
+    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles")
+    check("Command Centre shows habits for today", "habits today" in page.inner_text("#view").lower())
+    page.goto(BASE + "/#/goals/goals"); page.click('.page-head [data-act="goal-new"]'); page.wait_for_selector("#goalForm")
+    page.fill("#gl-title", "Lose 8 kg"); page.fill("#gl-target", "8"); page.fill("#gl-current", "2"); page.fill("#gl-unit", "kg"); page.click("#glSave"); page.wait_for_timeout(500)
+    page.keyboard.press("Escape"); page.wait_for_selector(".goal-card")
+    check("goal progress computed from target and current (25%)", "25%" in page.inner_text(".goal-card"))
+    page.goto(BASE + "/#/goals/health"); page.click('.page-head [data-act="health-new"]'); page.wait_for_selector("#healthForm")
+    page.fill("#hl-value", "82.4"); page.click("#hlSave"); page.wait_for_timeout(400)
+    check("health entry saved", len(DB["health_logs"]) == 1 and DB["health_logs"][0]["kind"] == "weight")
+
+    # ---------- reports ----------
+    page.goto(BASE + "/#/reports/daily"); page.wait_for_selector(".tiles")
+    check("daily overview counts overdue from records", page.inner_text(".tile.bad .tn").strip() == str(sum(1 for t in DB["tasks"] if t["due_at"] and t["status"] not in ("completed", "cancelled") and t["due_at"] < iso(dt.datetime.now(dt.timezone.utc)))))
+    page.goto(BASE + "/#/reports/weekly"); page.wait_for_selector("#reviewForm")
+    page.fill("#rv-wins", "Kite BOM material ready"); page.click("#rvSave"); page.wait_for_timeout(500)
+    rv = DB["weekly_reviews"][0] if DB["weekly_reviews"] else None
+    check("weekly review saved with a numbers snapshot", rv and rv["wins"] == "Kite BOM material ready" and "completed" in rv["snapshot"])
+    page.fill("#rv-wins", "Kite BOM material ready; GRN done"); page.click("#rvSave"); page.wait_for_timeout(500)
+    check("saving again updates the same week (no duplicate)", len(DB["weekly_reviews"]) == 1 and DB["weekly_reviews"][0]["wins"].endswith("GRN done"))
+    shot(page, "12-weekly-review", True)
+    page.goto(BASE + "/#/reports/workload"); page.wait_for_selector(".rtable")
+    check("workload lists each owner", "Adil Rahman" in page.inner_text(".rtable") and "Jezz" in page.inner_text(".rtable"))
+    with page.expect_download() as dl: page.click('[data-act="rep-csv-workload"]')
+    csv = open(dl.value.path(), encoding="utf-8-sig").read()
+    check("workload CSV export has a header and rows", csv.startswith("Owner,Open,Overdue") and "Adil Rahman" in csv)
+    page.goto(BASE + "/#/reports/projects"); page.click('[data-act="rep-project"]'); page.wait_for_selector("text=plan vs actual")
+    check("project report shows milestone variance", "2d late" in page.inner_text("#view"))
+
+    # ---------- workspace tabs + search ----------
+    page.goto(BASE + f"/#/w/{WS[1]}/knowledge"); page.wait_for_selector(".viewtabs")
+    check("workspace Notes & docs tab lists the meeting", "Weekly logistics review" in page.inner_text("#view"))
+    page.goto(BASE + f"/#/w/{WS[1]}/activity"); page.wait_for_timeout(600)
+    check("workspace Activity tab loads", "No activity recorded yet" in page.inner_text("#view") or page.locator(".feed").count() == 1)
+    page.goto(BASE + "/#/search"); page.fill("#global-q", "logistics review"); page.wait_for_selector(".srow", timeout=4000)
+    page.wait_for_timeout(600); check("search returns notes", "weekly logistics review" in page.inner_text("#searchResults").lower(), page.inner_text("#searchResults")[:200])
+
     # Settings: hide a dashboard section persists to profile prefs
     page.goto(BASE + "/#/settings"); page.wait_for_selector(".settings")
     page.uncheck('[data-act="toggle-section"][data-k="activity"]'); page.wait_for_timeout(300)
@@ -295,6 +412,11 @@ with sync_playwright() as pw:
             check("phone: no horizontal scroll on tasks", not page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"))
             shot(page, "08-tasks-phone", True)
             page.click('.trow[data-id="t-wait"]'); page.wait_for_selector("#tf-title"); shot(page, "09-task-phone")
+            page.keyboard.press("Escape")
+            for route_ in ["goals/habits", "reports/weekly", "notes/decisions", "reports/projects"]:
+                page.goto(BASE + "/#/" + route_); page.wait_for_selector(".viewtabs")
+                check(f"phone: no horizontal scroll on {route_}", not page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"))
+            shot(page, "13-projects-report-phone", True)
         ctx.close()
     b.close()
 

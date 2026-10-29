@@ -1,9 +1,12 @@
 // Workspaces → projects → milestones & tasks.
 import { esc, fmtDate, todayISO, daysFromToday } from "../util.js";
 import { isOpen, isOverdue, sortTasks, milestoneVariance, PROJECT_STATUS_LABEL, PRIORITY_LABEL, overduePrerequisites, openPrerequisites, isClosed } from "../logic.js";
-import { state, wsById, projectById, membersOf, nameOf, canWrite, isWsOwner, roleIn, contactById } from "../store.js";
+import { emit, state, wsById, projectById, membersOf, nameOf, canWrite, isWsOwner, roleIn, contactById } from "../store.js";
 import { ICON, taskRow, section, emptyState, wsDot, avatar, projectPill, prioChip } from "../ui.js";
-import { phRow } from "./home.js";
+import { phRow, actRow } from "./home.js";
+import { linkedPanel, NOTE_KIND, DOC_CATEGORY } from "../sheets/knowledge.js";
+import { sb, run } from "../api.js";
+import { ago } from "../util.js";
 
 export function renderWorkspaces(view) {
   const list = state.workspaces;
@@ -35,7 +38,7 @@ export function renderWorkspace(view, id, tab = "projects") {
   const ts = state.tasks.filter(t => t.workspace_id === id && !t.deleted_at);
   const fus = state.followUps.filter(f => f.workspace_id === id);
   const contacts = state.contacts.filter(c => c.workspace_id === id);
-  const tabs = { projects: `Projects · ${projs.filter(p => !p.archived).length}`, tasks: `Tasks · ${ts.filter(isOpen).length}`, followups: `Follow-ups · ${fus.filter(f => ["open", "escalated"].includes(f.status)).length}`, contacts: `Contacts · ${contacts.length}` };
+  const tabs = { projects: `Projects · ${projs.filter(p => !p.archived).length}`, tasks: `Tasks · ${ts.filter(isOpen).length}`, followups: `Follow-ups · ${fus.filter(f => ["open", "escalated"].includes(f.status)).length}`, contacts: `Contacts · ${contacts.length}`, knowledge: `Notes & docs · ${state.notes.filter(n => n.workspace_id === id).length + state.documents.filter(d => d.workspace_id === id).length}`, activity: "Activity" };
   let body = "";
   if (tab === "projects") {
     const active = projs.filter(p => !p.archived);
@@ -52,6 +55,16 @@ export function renderWorkspace(view, id, tab = "projects") {
     const openF = fus.filter(f => ["open", "escalated"].includes(f.status));
     body = (writable ? `<div class="toolbar"><button class="btn primary" data-act="new-followup" data-ws="${id}">${ICON.plus}New follow-up</button></div>` : "") +
       (openF.length ? `<div class="list">${openF.map(fuLine).join("")}</div>` : emptyState("No open follow-ups", "Track commitments: who owes you what, and by when."));
+  } else if (tab === "knowledge") {
+    const ns = state.notes.filter(n => n.workspace_id === id), ds = state.documents.filter(d => d.workspace_id === id);
+    body = (writable ? `<div class="toolbar"><button class="btn primary" data-act="new-note" data-ws="${id}">${ICON.plus}New note</button><button class="btn" data-act="new-note" data-kind="meeting" data-ws="${id}">Meeting notes</button><button class="btn" data-act="new-note" data-kind="decision" data-ws="${id}">Decision</button><button class="btn" data-act="upload-doc" data-ws="${id}">${ICON.download}Upload</button></div>` : "") +
+      (ns.length ? section("Notes", `<div class="list">${ns.slice(0, 50).map(n => `<div class="trow" data-act="open-note" data-id="${n.id}" role="button" tabindex="0"><span class="kico">${ICON.notes}</span><div class="tmain"><div class="ttitle">${esc(n.title)}</div><div class="tmeta">${NOTE_KIND[n.kind]} · ${ago(n.updated_at)}</div></div></div>`).join("")}</div>`, { count: ns.length }) : "") +
+      (ds.length ? section("Documents", `<div class="list">${ds.slice(0, 50).map(d => `<div class="trow" data-act="open-doc" data-id="${d.id}" role="button" tabindex="0"><span class="kico">${d.kind === "link" ? ICON.link : ICON.download}</span><div class="tmain"><div class="ttitle">${esc(d.title)}</div><div class="tmeta">${DOC_CATEGORY[d.category]} · ${ago(d.created_at)}</div></div></div>`).join("")}</div>`, { count: ds.length }) : "") +
+      (!ns.length && !ds.length ? emptyState("No notes or documents yet", "Keep meeting notes, decisions, invoices and certificates for this workspace in one place.") : "");
+  } else if (tab === "activity") {
+    const cached = wsActivity.get(id);
+    if (!cached || Date.now() - (wsActivityAt.get(id) || 0) > 60000) { wsActivityAt.set(id, Date.now()); loadWsActivity(id); }
+    body = cached ? (cached.length ? `<ul class="feed">${cached.map(actRow).join("")}</ul><p class="hint">Latest ${cached.length} changes. The audit log is append-only.</p>` : `<p class="calm">No activity recorded yet.</p>`) : `<div class="loading"><div class="spinner"></div>Loading activity…</div>`;
   } else {
     body = (writable ? `<div class="toolbar"><button class="btn primary" data-act="new-contact" data-ws="${id}">${ICON.plus}New contact</button></div>` : "") +
       (contacts.length ? `<div class="clist">${contacts.map(c => `<button class="cline" data-act="open-contact" data-id="${c.id}"><span class="av" style="--h:${(c.name.charCodeAt(0) * 37) % 360}">${esc(c.name[0].toUpperCase())}</span><span class="tmain"><span class="ttitle">${esc(c.name)}</span><span class="tmeta">${esc(c.organisation || "")}${c.email ? " · " + esc(c.email) : ""}</span></span><span class="kind">${esc(c.kind)}</span></button>`).join("")}</div>` :
@@ -62,6 +75,16 @@ export function renderWorkspace(view, id, tab = "projects") {
     <div class="viewtabs">${Object.entries(tabs).map(([k, v]) => `<a href="#/w/${id}/${k}" class="${k === tab ? "on" : ""}">${v}</a>`).join("")}</div>
     ${body}`;
 }
+
+const wsActivity = new Map(), wsActivityAt = new Map();
+async function loadWsActivity(id) {
+  const r = await run(sb.from("activity").select("*").eq("workspace_id", id).order("created_at", { ascending: false }).limit(200));
+  wsActivity.set(id, r.data || []);
+  if (r.error) wsActivity.delete(id);
+  wsActivityAt.set(id, Date.now());
+  if (state.route.name === "w" && state.route.a === id && state.route.b === "activity") emit("data");
+}
+export const clearWsActivity = () => wsActivity.clear();
 
 export function fuLine(f) {
   const c = contactById(f.contact_id), today = todayISO(state.tz);
@@ -102,6 +125,7 @@ export function renderProject(view, id) {
   </div>
   ${section("Open tasks", `${open.length ? `<div class="list">${open.map(t => taskRow(t, { showWs: false })).join("")}</div>` : `<p class="calm">No open tasks.</p>`}
     ${writable ? `<button class="btn sm" data-act="capture" data-ws="${w.id}" data-project="${id}">${ICON.plus}Add task</button>` : ""}`, { count: open.length })}
+  ${linkedPanel("project", id, p.workspace_id)}
   ${done.length ? section("Completed", `<div class="list">${done.slice(0, 15).map(t => taskRow(t, { showWs: false })).join("")}</div>`, { count: done.length }) : ""}`;
 }
 

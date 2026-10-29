@@ -2,11 +2,13 @@
 import { esc, fmtDate, zonedDate, todayISO, addDays, daysFromToday, ago, fmtDateTime, relDay } from "../util.js";
 import { isOpen, isOverdue, dueInDays, followUpDue, attentionItems, sortTasks, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
 import { state, wsById, projectById, contactById, nameOf, shortName, activeWorkspaces } from "../store.js";
+import { habitChecklist, activeHabits } from "./goals.js";
 import { ICON, taskRow, section, emptyState, wsDot, projectPill, statusPill, prioChip, avatar } from "../ui.js";
 
 export const HOME_SECTIONS = {
   attention: "What needs my attention",
   today: "Today",
+  habits: "Habits today",
   tiles: "Summary",
   upcoming: "Next 7 days",
   waiting: "Waiting on others",
@@ -79,6 +81,10 @@ export function renderHome(view) {
       (!todayList.length && !fuRows ? `<p class="calm">Nothing due today.${inbox.length ? ` <a href="#/tasks/inbox">${inbox.length} item(s) in your inbox</a> to sort.` : ""}</p>` : "") +
       (todayList.length > 12 ? `<a class="more" href="#/tasks/today">See all ${todayList.length}</a>` : ""), { count: todayList.length + fuItemsDue.length }));
   }
+  if (!hidden.has("habits") && activeHabits().length) {
+    const hl = habitChecklist();
+    if (hl) parts.push(section("Habits today", hl + `<a class="more" href="#/goals/habits">Week view</a>`, { cls: "habits-sect" }));
+  }
 
   const grid = [];
   if (!hidden.has("upcoming")) {
@@ -149,11 +155,13 @@ export function phRow(p) {
   </a>`;
 }
 
-function actRow(a) {
+export function actRow(a) {
   const what = { created: "created", updated: "updated", completed: "completed", reopened: "reopened", deleted: "binned", restored: "restored", insert: "added", update: "updated", delete: "deleted", dependency_added: "added a prerequisite to", member_added: "added a member to", member_removed: "removed a member from", role_changed: "changed a role in" }[a.action] || a.action;
   let label = "";
   if (a.entity_type === "task") { const t = state.taskById.get(a.entity_id); label = t ? `<button class="linkbtn" data-act="open-task" data-id="${t.id}">${esc(t.title)}</button>` : `<span>${esc((a.changes && a.changes.title) || "a task")}</span>`; }
   else if (a.entity_type === "project") { const p = projectById(a.entity_id); label = p ? `<a href="#/p/${p.id}">${esc(p.name)}</a>` : "a project"; }
+  else if (a.entity_type === "note") { const n = state.notes.find(x => x.id === a.entity_id); label = n ? `<button class="linkbtn" data-act="open-note" data-id="${n.id}">${esc(n.title)}</button>` : "a note"; }
+  else if (a.entity_type === "document") { const d = state.documents.find(x => x.id === a.entity_id); label = d ? `<button class="linkbtn" data-act="open-doc" data-id="${d.id}">${esc(d.title)}</button>` : "a document"; }
   else if (a.entity_type === "follow_up") label = "a follow-up";
   else if (a.entity_type === "milestone") label = "a milestone";
   else if (a.entity_type === "workspace") label = esc((wsById(a.entity_id) || {}).name || "a workspace");

@@ -3,7 +3,8 @@ import { esc, zonedDate, zonedTime, zonedToISO, fmtDateTime, ago } from "../util
 import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements,
          openPrerequisites, dependents, taskProgress, overduePrerequisites } from "../logic.js";
 import { state, wsById, projectById, membersOf, nameOf, shortName, subtasksOf, canWrite, contactById, activeWorkspaces } from "../store.js";
-import { sb, run, updateTask, createTask, reopenTask, refreshTask } from "../api.js";
+import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor } from "../api.js";
+import { linkedPanel } from "./knowledge.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, statusPill, prioChip, taskRow, avatar, dueLabel, busy } from "../ui.js";
 
 const sheetState = { tab: "details", comments: null, activity: null, saving: 0, savedAt: null };
@@ -85,7 +86,7 @@ function renderTaskInner(sh, t) {
   const subs = subtasksOf(t.id), prog = taskProgress(t, subs);
   const tz = state.tz;
   const parent = t.parent_id ? state.taskById.get(t.parent_id) : null;
-  const tabs = { details: "Details", plan: `Subtasks & links${subs.length ? " · " + subs.length : ""}`, updates: `Updates${sheetState.comments ? " · " + sheetState.comments.filter(c => c.kind === "note").length : ""}`, history: "History" };
+  const tabs = { details: "Details", plan: `Subtasks, links & files${(subs.length + linksFor("task", t.id).length) ? " · " + (subs.length + linksFor("task", t.id).length) : ""}`, updates: `Updates${sheetState.comments ? " · " + sheetState.comments.filter(c => c.kind === "note").length : ""}`, history: "History" };
   const savedNote = sheetState.saving ? `<span class="savestate">Saving…</span>` : sheetState.savedAt && Date.now() - sheetState.savedAt < 4000 ? `<span class="savestate ok">Saved</span>` : "";
   sh.innerHTML = sheetHead(closed ? "Task · " + STATUS_LABEL[t.status] : "Task", `${ws ? esc(ws.name) : ""}${parent ? ` · subtask of <a href="#" data-act="open-task" data-id="${parent.id}">${esc(parent.title)}</a>` : ""} ${savedNote}`) + `
   <div class="sh-body">
@@ -205,7 +206,8 @@ function planTab(t, w, subs) {
     ${links.length ? "" : `<p class="hint">Add contacts in the workspace's Contacts tab to link them here.</p>`}
     <div id="taskContacts" class="chips">Loading…</div>
     ${w && links.length ? `<select class="input" id="addContact"><option value="">Link a contact…</option>${links.map(c => `<option value="${c.id}">${esc(c.name)}${c.organisation ? " · " + esc(c.organisation) : ""} (${c.kind})</option>`).join("")}</select>` : ""}
-  </section>`;
+  </section>
+  ${linkedPanel("task", t.id, t.workspace_id)}`;
 }
 function depRow(p, w, act, tid) {
   const d = dueLabel(p);

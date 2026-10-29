@@ -3,6 +3,7 @@ export const state = {
   user: null, me: null, prefs: {}, tz: "Asia/Qatar",
   workspaces: [], members: [], profiles: {}, projects: [], health: [], milestones: [],
   tasks: [], deps: [], followUps: [], contacts: [], notifications: [], lastComments: [], activity: [],
+  notes: [], documents: [], links: [], goals: [], habits: [], habitLogs: [], healthLogs: [], reviews: [],
   taskById: new Map(), healthById: new Map(),
   loaded: false, route: { name: "home", params: {} },
   ui: { filters: {}, sort: null, mode: null, selected: new Set(), selecting: false, search: "", homeWs: "", calMode: "month", calCursor: null }
@@ -28,4 +29,6 @@ export function nameOf(uid) {
   return p ? (p.display_name || p.email.split("@")[0]) : "Someone";
 }
 export const shortName = uid => (state.user && uid === state.user.id ? "You" : nameOf(uid));
+export const noteById = id => state.notes.find(n => n.id === id);
+export const docById = id => state.documents.find(d => d.id === id);
 export const subtasksOf = id => state.tasks.filter(t => t.parent_id === id && !t.deleted_at);

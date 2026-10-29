@@ -115,8 +115,8 @@ export async function runSearch(q) {
   const r = await run(sb.rpc("search_all", { q }));
   if (seq !== searchSeq || !document.getElementById("searchResults")) return;
   if (r.error) { box.innerHTML = `<div class="banner bad">${esc(r.error)}</div>`; return; }
-  const groups = { task: "Tasks", project: "Projects", follow_up: "Follow-ups", contact: "Contacts", comment: "Updates" };
-  const act = { task: "open-task", project: "open-project", follow_up: "open-followup", contact: "open-contact", comment: "open-task" };
+  const groups = { task: "Tasks", project: "Projects", follow_up: "Follow-ups", note: "Notes", document: "Documents", contact: "Contacts", comment: "Updates" };
+  const act = { task: "open-task", project: "open-project", follow_up: "open-followup", note: "open-note", document: "open-doc", contact: "open-contact", comment: "open-task" };
   const rows = r.data || [];
   box.innerHTML = rows.length ? Object.keys(groups).map(k => { const g = rows.filter(x => x.kind === k); return g.length ? section(groups[k], `<div class="list">${g.map(x => `<button class="srow" data-act="${act[k]}" data-id="${x.id}"><span class="ttitle">${esc(x.title)}</span><span class="tmeta">${wsDot(wsById(x.workspace_id))}${esc((wsById(x.workspace_id) || {}).name || "")}${x.subtitle ? " · " + esc(x.subtitle) : ""}</span></button>`).join("")}</div>`, { count: g.length }) : ""; }).join("")
     : emptyState("No results", `Nothing matches “${q}”.`);

@@ -64,3 +64,20 @@ The audit log (`activity`) is written only by triggers and can't be edited or de
 
 ## Command Centre "attention" ranking
 Overdue task (100 + priority) › Escalated follow-up (90) › Critical milestone overdue (88) › Project blocked (85) › Blocked task (80 + priority) › Follow-up due (75) › Response overdue (72) › Task follow-up due (70 + priority) › Milestone overdue (68) › Project at risk (65) › Due today (60 + priority) › Critical due within 2 days (55).
+
+## Notes, decisions & documents (Phase 2)
+- Notes belong to one workspace. Kinds: **note**, **meeting** (date, attendees), **decision** (decision text required; status proposed → decided → superseded; deciding stamps the date).
+- Meeting action items are lines starting with `- [ ]`, `TODO:`, `Action:`, `AI:` or `->`. Ticked items (`[x]`) are skipped. They are only *proposed*: you review titles and owners, nothing is created until you confirm, and **no deadline is added**. Created tasks are linked back to the meeting.
+- Documents are either a **file** (private bucket `documents`, max 25 MB, stored at `<workspace>/<uuid>/<safe name>`) or a **link** (http/https only). Files open through signed links that expire after 10 minutes; nothing is ever public.
+- Links (`record_links`) connect a note or document to a task, project, contact, follow-up or note **in the same workspace**; links to missing records or other workspaces are rejected, and links disappear when either side is deleted.
+- Access: members read; owners/members add and edit; viewers read only; outsiders and anonymous visitors see nothing (tables and storage). Notes and documents changes go to the audit log.
+
+## Goals, habits & health (Phase 2)
+- Private to the signed-in user in every case — co-members of a shared workspace cannot see them.
+- Goals: horizon long-term → yearly → quarterly → monthly → weekly; objectives nest under a goal. Progress = current ÷ target (capped 0–100); no target = no percentage. Achieved stamps the date.
+- Habits: every day, specific weekdays, or N times a week (weeks start Sunday). A check-in can be back-filled but not made more than one day ahead. Streak counts consecutive scheduled days (or weeks meeting the target); an unfinished today doesn't break it.
+- Health log (weight, workout, walk, wellness note) is optional and deletable.
+
+## Reports (Phase 2)
+- Every figure is counted from stored records at the time shown. On-time completion = completed in the week ÷ (completed + due in the week and still open).
+- Weekly review (wins, issues, priorities, notes) is private, one per week, saved with a snapshot of that week's numbers.

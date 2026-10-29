@@ -2,7 +2,8 @@
 import { esc, zonedToISO, todayISO, addDays } from "../util.js";
 import { PRIORITIES, PRIORITY_LABEL } from "../logic.js";
 import { state, activeWorkspaces, canWrite, membersOf, nameOf } from "../store.js";
-import { createTask, savePrefs } from "../api.js";
+import { createTask, savePrefs, uploadDocument, addLink } from "../api.js";
+import { safeFileName } from "../insights.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, busy } from "../ui.js";
 import { openTask } from "./task.js";
 
@@ -56,7 +57,7 @@ function render(sh) {
       <label class="field"><span>Project</span><select class="input" id="cap-project"><option value="">No project</option>${projects.map(p => `<option value="${p.id}" ${p.id === d.project_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     </div>
     <label class="field"><span>Description <small>(optional)</small></span><textarea class="input" id="cap-desc" rows="3">${esc(d.description)}</textarea></label>
-    <p class="hint">Attachments arrive with Notes & Documents (Phase 2). For now, paste a link in the description.</p>` : ""}
+    <label class="field"><span>Attach files <small>(optional · private · max 25 MB each)</small></span><input class="input" type="file" id="cap-files" multiple></label>` : ""}
     <div class="sheet-foot"><button class="btn primary block" type="submit" id="capSave">Save task</button></div>
     <p class="hint center">Tip: press <kbd>N</kbd> anywhere to capture.</p>
   </form>`;
@@ -109,9 +110,17 @@ export async function handleCaptureSubmit(form) {
     due_at: d.due_d ? zonedToISO(d.due_d, d.due_t || "23:59", state.tz) : null, due_all_day: !d.due_t,
     follow_up_at: d.fu_d ? zonedToISO(d.fu_d, d.fu_t || "09:00", state.tz) : null
   };
+  const files = $("cap-files") ? [...$("cap-files").files] : [];
   const r = await createTask(row);
+  if (r.error) { busy(btn, false); toastError(r.error); return true; }
+  for (const f of files) {
+    if (btn) btn.innerHTML = `Uploading ${esc(f.name)}…`;
+    const u = await uploadDocument(f, { workspace_id: row.workspace_id, title: f.name }, safeFileName);
+    if (u.error) { toastError(`${f.name}: ${u.error}`); continue; }
+    const l = await addLink(row.workspace_id, "document", u.data.id, "task", r.data.id);
+    if (l.error) toastError(l.error);
+  }
   busy(btn, false);
-  if (r.error) { toastError(r.error); return true; }
   cap.saved = r.data;
   if (state.prefs.last_ws !== d.workspace_id) savePrefs({ last_ws: d.workspace_id });
   rerenderSheet();

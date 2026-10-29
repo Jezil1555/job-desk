@@ -30,3 +30,20 @@
 
 ### Next (Phase 2)
 Notes & documents (private storage, signed URLs), goals & habits, reports (daily overview, weekly executive review, project reports), activity views per workspace, mobile refinements.
+
+
+## 2026-10-29 — Phase 2 (Notes, documents, goals, habits, reports)
+
+### Changes
+- **Schema** (`20261029160000_phase2_knowledge_goals.sql`, applied): `notes` (note/meeting/decision, full-text search), `documents` (file or link), `record_links`, private storage bucket `documents` with membership-based policies; private per-user `goals`, `goal_updates`, `habits`, `habit_logs`, `health_logs`, `weekly_reviews`; `search_all()` now covers notes and documents; audit + realtime on notes/documents/links. Additive only — no existing data changed.
+- **Frontend**: Notes & Documents screen (tabs, filters, tags, decision log), note editor with linking and "create tasks from action items" (reviewed, no invented dates), document upload/link/open/delete; "Notes & documents" panel on every task and project; attachments in Quick Capture; Goals & Habits (today check-in, week grid, streaks, 30-day rate, goals by horizon with objectives and progress updates, optional health log with weight trend); Reports (daily overview, weekly review with save, project plan-vs-actual, workload, CSV exports, print/PDF); workspace "Notes & docs" and "Activity" tabs; "Habits today" on the Command Centre. Service worker cache → `jobdesk-v4`.
+- Rules documented in `docs/RULES.md`.
+
+### Verification
+- Unit tests: `npm test` → 29/29 (adds 12 for habits, streaks, action items, weekly report, workload, milestones, CSV).
+- End-to-end UI: `python3 tests/e2e/run.py` → 71/71 (adds 34: meeting → reviewed tasks with no deadlines, decision validation, file upload to workspace folder + signed link + delete, habit tick/untick and future lock, goal progress, health log, daily/weekly/project/workload reports, weekly review upsert, CSV download, workspace tabs, note search, phone layouts).
+- Database tests: `supabase/tests/phase2_tests.sql` written (RLS for owner/viewer/outsider/anon on notes, documents, links and storage; cross-workspace link rejection; private goals/habits; habit date rule) — see the run status reported alongside this release.
+
+### Known limitations
+- Linking an existing note/document from a task uses a numbered picker; a searchable picker is a later refinement.
+- Health log has no charts beyond the weight trend.

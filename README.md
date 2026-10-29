@@ -1,6 +1,6 @@
 # Job Desk — personal command centre
 
-Tasks, projects, follow-ups and (later) finances across QCloud, Dlusso, Fitness Hub, The Burgery and personal life. Installable on iPhone and Android.
+Tasks, projects, follow-ups and notes & documents, goals & habits, reports and (later) finances across QCloud, Dlusso, Fitness Hub, The Burgery and personal life. Installable on iPhone and Android.
 
 - **Live:** https://job-desk-u8nj.onrender.com
 - **Frontend:** plain ES modules in `public/` (no build step), installable PWA, push notifications.
@@ -16,6 +16,6 @@ Tasks, projects, follow-ups and (later) finances across QCloud, Dlusso, Fitness 
 npm test                                  # unit tests (rules, time zones)
 npm run check                             # syntax-check every module
 npm i --no-save @supabase/supabase-js@2.45.4 && python3 tests/e2e/run.py   # UI end-to-end (needs Python Playwright)
-psql "$DATABASE_URL" -f supabase/tests/phase1_tests.sql                      # database tests (rolled back)
+psql "$DATABASE_URL" -f supabase/tests/phase1_tests.sql   # database tests (rolled back; also phase2_tests.sql)
 ```
 Migrations live in `supabase/migrations/` and are applied in order. After changing app files, bump `CACHE` in `public/sw.js` so installed phones update.

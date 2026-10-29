@@ -8,6 +8,10 @@ import { openTask, handleTaskChange, handleTaskInput, handleTaskClick, handleTas
 import { openCapture, handleCaptureChange, handleCaptureClick, handleCaptureSubmit } from "./sheets/capture.js";
 import { openProjectForm, openMilestoneForm, openFollowUp, openWorkspaceForm, openContactForm, handleFormSubmit, handleFormClick, handleFormChange } from "./sheets/forms.js";
 import { renderHome } from "./views/home.js";
+import { renderNotes, handleNotesChange, handleNotesInput, NOTE_TABS } from "./views/notes.js";
+import { renderGoals, handleGoalsClick, handleGoalsChange, handleGoalsSubmit } from "./views/goals.js";
+import { renderReports, handleReportsClick, handleReportsChange, handleReportsSubmit, REPORT_TABS } from "./views/reports.js";
+import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported } from "./views/other.js";
@@ -19,9 +23,9 @@ const NAV = [
   { key: "workspaces", label: "Projects & Workspaces", icon: "folder", href: "#/workspaces" },
   { key: "calendar", label: "Calendar & Follow-ups", icon: "calendar", href: "#/calendar" },
   { key: "finance", label: "Finance & CFO", icon: "finance", href: "#/finance", soon: "Phase 3" },
-  { key: "goals", label: "Goals & Habits", icon: "goals", href: "#/goals", soon: "Phase 2" },
-  { key: "notes", label: "Notes & Documents", icon: "notes", href: "#/notes", soon: "Phase 2" },
-  { key: "reports", label: "Reports & Insights", icon: "reports", href: "#/reports", soon: "Phase 2" },
+  { key: "goals", label: "Goals & Habits", icon: "goals", href: "#/goals" },
+  { key: "notes", label: "Notes & Documents", icon: "notes", href: "#/notes" },
+  { key: "reports", label: "Reports & Insights", icon: "reports", href: "#/reports" },
   { key: "settings", label: "Settings", icon: "settings", href: "#/settings" }
 ];
 
@@ -40,10 +44,10 @@ function render() {
   if (!state.user) return;
   const r = state.route = parseRoute();
   // deep links that open a panel over the Command Centre
-  if (r.name === "t" || r.name === "f") {
-    const id = r.a; history.replaceState(null, "", "#/home");
+  if (["t", "f", "n", "d"].includes(r.name)) {
+    const id = r.a; history.replaceState(null, "", r.name === "n" || r.name === "d" ? "#/notes" + (r.name === "d" ? "/documents" : "") : "#/home");
     state.route = parseRoute(); render();
-    if (state.loaded) r.name === "t" ? openTask(id) : openFollowUp(id); else pendingOpen = r;
+    if (state.loaded) openDeep(r.name, id); else pendingOpen = r;
     return;
   }
   renderNav();
@@ -62,7 +66,10 @@ function render() {
       case "search": renderSearch(view); title = "Search"; break;
       case "alerts": renderAlerts(view); title = "Alerts"; break;
       case "settings": renderSettings(view); break;
-      case "finance": case "goals": case "notes": case "reports": renderPlanned(view, r.name); break;
+      case "notes": renderNotes(view, r.a || "notes"); break;
+      case "goals": renderGoals(view, r.a || "habits"); break;
+      case "reports": renderReports(view, r.a || "daily"); break;
+      case "finance": renderPlanned(view, r.name); break;
       default: renderHome(view); title = "Command Centre";
     }
   } catch (e) {
@@ -73,6 +80,7 @@ function render() {
   document.title = `${title} · Job Desk`;
 }
 let pendingOpen = null;
+const openDeep = (k, id) => ({ t: openTask, f: openFollowUp, n: openNote, d: openDocument })[k](id);
 
 function renderNav() {
   const k = navKey(state.route);
@@ -120,6 +128,9 @@ document.addEventListener("click", async e => {
   if (await handleTasksClick(act, el, rerender)) return;
   if (handleCalendarClick(act, el, rerender)) return;
   if (await handleSettingsClick(act, el, rerender)) return;
+  if (await handleKnowledgeClick(act, el)) return;
+  if (await handleGoalsClick(act, el, rerender)) return;
+  if (await handleReportsClick(act, el, rerender)) return;
   const id = el.dataset.id;
   switch (act) {
     case "close-sheet": closeSheet(); if (!sheetOpen()) clearTaskSheet(); break;
@@ -162,16 +173,23 @@ document.addEventListener("change", async e => {
   if (await handleFormChange(e)) return;
   if (handleTasksChange(e, rerender)) return;
   if (await handleSettingsChange(e)) return;
+  if (await handleKnowledgeChange(e)) return;
+  if (handleNotesChange(e, rerender)) return;
+  if (handleGoalsChange(e, rerender)) return;
+  if (handleReportsChange(e, rerender)) return;
   const id = e.target.id;
   if (id === "home-ws") { state.ui.homeWs = e.target.value; render(); }
   if (id === "home-owner") { state.ui.homeOwner = e.target.value; render(); }
   if (id === "cal-ws") { state.ui.calWs = e.target.value; render(); }
   if (id === "fu-filter-ws") { state.ui.fuWs = e.target.value; render(); }
 });
+const keepFocus = debounce(id => { const i0 = $(id), pos = i0 && i0.selectionStart; render(); const i = $(id); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (err) {} } }, 200);
 const searchDebounced = debounce(q => runSearch(q), 250);
 const listDebounced = debounce(() => { const pos = $("tl-search") && $("tl-search").selectionStart; render(); const i = $("tl-search"); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (err) {} } }, 200);
 document.addEventListener("input", e => {
   handleTaskInput(e);
+  if (handleKnowledgeInput(e)) return;
+  if (handleNotesInput(e, keepFocus)) return;
   if (e.target.id === "global-q") { state.ui.globalQ = e.target.value; searchDebounced(e.target.value); }
   if (e.target.id === "tl-search") { state.ui.search = e.target.value; listDebounced(); }
   if (e.target.id === "topsearch") { state.ui.globalQ = e.target.value; }
@@ -184,6 +202,9 @@ document.addEventListener("submit", async e => {
   if (await handleCaptureSubmit(form)) return;
   if (await handleTaskSubmit(form)) return;
   if (await handleFormSubmit(form)) return;
+  if (await handleKnowledgeSubmit(form)) return;
+  if (await handleGoalsSubmit(form, rerender)) return;
+  if (await handleReportsSubmit(form, rerender)) return;
 });
 $("sheetWrap").addEventListener("click", e => { if (e.target.id === "sheetBackdrop") { closeSheet(); if (!sheetOpen()) clearTaskSheet(); } });
 window.addEventListener("hashchange", () => { closeAllSheets(); clearTaskSheet(); state.ui.selecting = false; state.ui.selected.clear(); render(); window.scrollTo(0, 0); });
@@ -278,7 +299,7 @@ async function showApp() {
   catch (e) { $("view").innerHTML = `<div class="empty"><strong>Couldn't load your data</strong><span>${esc(friendlyError(e))}</span><button class="btn primary" data-act="reload">Try again</button></div>`; return; }
   subscribe(n => { if (document.visibilityState === "visible") toast(n.title, { action: { label: "View", run: () => { markRead([n.id]); if (n.task_id) openTask(n.task_id); else if (n.follow_up_id) openFollowUp(n.follow_up_id); } } }); });
   render();
-  if (pendingOpen) { const p = pendingOpen; pendingOpen = null; p.name === "t" ? openTask(p.a) : openFollowUp(p.a); }
+  if (pendingOpen) { const p = pendingOpen; pendingOpen = null; openDeep(p.name, p.a); }
   ensurePush();
 }
 sb.auth.onAuthStateChange((event, session) => {
