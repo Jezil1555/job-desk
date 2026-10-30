@@ -163,6 +163,10 @@ def handle(route):
         if fn.startswith("fin_"):
             try: return reply(fin_rpc(fn, body))
             except FinError as e: return err(str(e))
+        if fn == "snooze_notification":
+            n_ = next((x for x in DB["notifications"] if x["id"] == body["p_notification"]), None)
+            if not n_: return err("not_found: alert not found")
+            n_["snoozed_until"] = body["p_until"]; n_["read_at"] = n_.get("read_at") or iso(now); return reply(None)
         if fn == "record_ai_decision":
             AI_PROPOSALS[body["p_proposal"]]["decisions"].append(body["p_decision"]); return reply(None)
         if fn == "set_project_baseline":
@@ -921,6 +925,19 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/home"); page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector(".proj-hero"); page.wait_for_timeout(500)
     check("project page shows the 14-day slip against the baseline", "slipped 14d" in page.inner_text("#view"), page.inner_text(".proj-hero"))
     shot(page, "27-project-baseline", True)
+    ctx.close()
+
+
+    # ---------- Increment 5: delivery status and snooze ----------
+    ctx, page = new_page(b, 1366, 900)
+    nid = DB["notifications"][0]["id"]
+    DB.setdefault("notification_deliveries", []).append({"notification_id": nid, "status": "sent", "attempts": 2, "sent_at": iso(now), "created_at": iso(now)})
+    page.goto(BASE + "/#/alerts"); page.wait_for_selector(".alist"); page.wait_for_timeout(600)
+    check("alert shows it reached the phone (after a retry)", "Sent to phone" in page.inner_text(".alist") and "2 tries" in page.inner_text(".alist"), page.inner_text(".alist")[:200])
+    page.click(f'[data-act="alert-snooze"][data-id="{nid}"][data-when="tomorrow"]'); page.wait_for_timeout(500)
+    sn = next(x for x in DB["notifications"] if x["id"] == nid)
+    check("snooze until tomorrow 9:00 Doha time", (sn.get("snoozed_until") or "").startswith((dt.date.fromisoformat(today_qa()) + dt.timedelta(days=1)).isoformat() + "T06:00"), str(sn.get("snoozed_until")))
+    check("snoozed alert moves to the Snoozed list", "snoozed" in page.inner_text("#view").lower() and page.locator(f'.alist [data-id="{nid}"]').count() == 0)
     ctx.close()
 
     # ---------- phone, light + dark ----------

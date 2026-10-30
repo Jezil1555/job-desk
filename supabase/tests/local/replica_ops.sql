@@ -50,3 +50,11 @@ create or replace function public.is_ws_member(ws uuid) returns boolean language
 create or replace function public.can_write_ws(ws uuid) returns boolean language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.workspace_members where workspace_id = ws and user_id = (select auth.uid()) and role in ('owner','member')) $$;
 create or replace function cron.unschedule(n text) returns boolean language sql as $$ select true $$;
+create table if not exists private.settings (key text primary key, value text not null);
+insert into private.settings values ('push_url', 'https://example.invalid/functions/v1/send-push'), ('push_secret', 'test-secret') on conflict do nothing;
+create table public.push_subscriptions (id uuid primary key default gen_random_uuid(), user_id uuid not null, endpoint text not null, p256dh text, auth text, user_agent text, created_at timestamptz not null default now());
+create schema if not exists net;
+create table if not exists net.calls (id bigserial primary key, url text, body jsonb, at timestamptz default now());
+create or replace function net.http_post(url text, body jsonb, headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ insert into net.calls (url, body) values (url, body) returning id $$;
+create function public.dispatch_push() returns trigger language plpgsql security definer set search_path = '' as $$ begin /* ORIGINAL-PUSH */ return new; end $$;
+create trigger notifications_push after insert on public.notifications for each row execute function public.dispatch_push();

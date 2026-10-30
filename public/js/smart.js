@@ -1,6 +1,6 @@
 // Rule-based helpers (no AI): read dates, owners, workspaces and priority typed into Quick Capture,
 // and build the daily briefing. Everything parsed is shown to the person as removable chips before saving.
-import { addDays, weekdayOf, todayISO, zonedDate, DEFAULT_TZ } from "./util.js";
+import { addDays, weekdayOf, todayISO, zonedDate, zonedToISO, DEFAULT_TZ } from "./util.js";
 
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
 const DAYS = { sun: 0, mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4, thurs: 4, fri: 5, sat: 6 };
@@ -126,3 +126,12 @@ export function followUpDraft({ kind = "follow_up", to, subject, expected, lastC
 const fmt = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 export const whatsappLink = (phone, text) => `https://wa.me/${String(phone || "").replace(/[^\d]/g, "")}?text=${encodeURIComponent(text)}`;
 export const mailtoLink = (email, subject, text) => `mailto:${encodeURIComponent(email || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+
+/** When a snooze choice should end, in the person's time zone. */
+export function snoozeUntil(when, tz, nowMs = Date.now()) {
+  if (when === "1h") return new Date(nowMs + 3600000).toISOString();
+  const today = todayISO(tz, new Date(nowMs));
+  if (when === "tomorrow") return zonedToISO(addDays(today, 1), "09:00", tz);
+  const dow = new Date(today + "T12:00:00Z").getUTCDay(), ahead = ((1 - dow + 7) % 7) || 7; // next Monday
+  return zonedToISO(addDays(today, ahead), "09:00", tz);
+}

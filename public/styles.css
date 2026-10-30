@@ -689,3 +689,4 @@ input.num { text-align: right; font-variant-numeric: tabular-nums; }
 .trow .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 ul.plain.small li { font-size: .85rem; margin: 4px 0; }
 .ptn-ledger { font-size: .88rem; } .ptn-ledger th, .ptn-ledger td { padding-left: 8px; padding-right: 8px; } .ptn-ledger .pill { white-space: nowrap; }
+.alert .snz { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; } .alert .snz .chip { font-size: .72rem; padding: 2px 8px; }

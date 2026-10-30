@@ -44,9 +44,12 @@ Once baselined, any date change needs a reason and is logged in `schedule_revisi
 only re-baselined with a reason (old baseline kept in the log). `schedule_variance` view gives slip days per project and milestone.
 Tests: 18 live DB checks (rolled back), rollback verified locally, 4 browser checks.
 
-## 8. Notifications — Partial
-- Met: server-side scheduled jobs (pg_cron), idempotency via `*_reminded_for` markers, user time zones, escalation dates on follow-ups, in-app history, phone push.
-- Gap: **delivery tracking and retry** (a failed push is not recorded or retried), **snooze**.
+## 8. Notifications — Met (increment 5, 30 Oct)
+Server-side scheduled jobs (pg_cron) for reminders, escalation (follow-ups), user time zones. Every phone push has a delivery record
+(`notification_deliveries`: pending / sent / failed / no device / gave up, attempts, last error), unique per alert and reason (idempotent).
+Failed or unconfirmed pushes are retried every 2 minutes with backoff (1, 5, 15, 60 min), giving up after 5 attempts. Alerts can be snoozed
+(1 hour / tomorrow 9:00 / Monday 9:00, up to 30 days); they come back unread and push again. In-app history shows delivery status.
+Tests: 11 local logic checks, 10 live DB checks (rolled back), rollback verified locally, 1 unit, 3 browser checks.
 
 ## 9. AI governance — Met (increment 4, 30 Oct)
 The assistant only returns suggestions: it has no route to post entries, confirm payments, delete records, change deadlines or owners, close commitments
@@ -72,7 +75,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 2. ~~Commitments~~ — done.
 3. ~~Project baselines~~ — done.
 4. ~~AI proposal log~~ — done.
-5. **Notification reliability** — delivery log, retry with backoff, snooze.
+5. ~~Notification reliability~~ — done.
 6. **Inter-entity transactions** — due-to / due-from between any two books, matching check.
 7. **Dlusso production costing** — goods received, consumption to WIP, finished-order cost, authorised negative-stock exception.
 8. **Foreign currency** — FX invoices/bills, realised gain/loss, month-end revaluation.

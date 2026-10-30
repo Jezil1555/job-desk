@@ -1,11 +1,12 @@
 // Calendar, Follow-ups, Search, Alerts, Settings and the modules planned for later phases.
 import { integrationsHtml } from "./integrations.js";
-import { esc, fmtDate, zonedDate, zonedTime, todayISO, addDays, weekdayOf, fmtDateTime, ago, DEFAULT_TZ } from "../util.js";
+import { esc, fmtDate, zonedDate, zonedTime, zonedToISO, todayISO, addDays, weekdayOf, fmtDateTime, ago, DEFAULT_TZ } from "../util.js";
 import { isOpen, isOverdue, STATUS_LABEL } from "../logic.js";
 import { state, wsById, projectById, contactById, activeWorkspaces, canWrite, nameOf } from "../store.js";
 import { sb, run, savePrefs } from "../api.js";
 import { ICON, taskRow, section, emptyState, wsDot, toast, toastError } from "../ui.js";
 import { fuLine } from "./workspaces.js";
+import { snoozeUntil } from "../smart.js";
 import { HOME_SECTIONS } from "./home.js";
 
 /* ======================= Calendar ======================= */
@@ -125,14 +126,35 @@ export async function runSearch(q) {
 
 /* ======================= Alerts ======================= */
 const ALERT_ICON = { assigned: ICON.user, update: ICON.note, overdue: ICON.clock, completed: ICON.done, added: ICON.people, due_soon: ICON.clock, follow_up: ICON.phone, escalation: ICON.alert, blocked: ICON.alert };
+const DELIVERY_LABEL = { sent: ["📱 Sent to phone", "ok-text"], pending: ["📱 Sending…", ""], failed: ["📱 Phone push failed — retrying", "warn-text"], no_device: ["No phone set up", "hint"], gave_up: ["📱 Couldn't reach your phone", "bad-text"] };
+let deliveries = null, deliveriesFor = "";
+function loadDeliveries(ids) {
+  const key = ids.join(","); if (key === deliveriesFor) return; deliveriesFor = key;
+  if (!ids.length) { deliveries = new Map(); return; }
+  sb.from("notification_deliveries").select("notification_id, status, attempts, sent_at, created_at").in("notification_id", ids).order("created_at").then(({ data }) => {
+    deliveries = new Map((data || []).map(d => [d.notification_id, d])); const v = document.querySelector(".alist"); if (v) renderAlerts(document.getElementById("view"));
+  });
+}
 export function renderAlerts(view) {
-  const list = state.notifications;
+  const now = new Date().toISOString();
+  const snoozed = state.notifications.filter(n => n.snoozed_until && n.snoozed_until > now), list = state.notifications.filter(n => !(n.snoozed_until && n.snoozed_until > now));
+  loadDeliveries(list.slice(0, 40).map(n => n.id));
+  const del = n => { const d = deliveries && deliveries.get(n.id); if (!d) return ""; const [l, c] = DELIVERY_LABEL[d.status] || ["", ""]; return `<small class="${c}">${l}${d.attempts > 1 ? ` · ${d.attempts} tries` : ""}</small>`; };
   view.innerHTML = `<div class="page-head"><div><h1>Alerts</h1><p class="sub">Reminders and changes from your workspaces.</p></div>
     <div class="filters">${list.some(n => !n.read_at) ? `<button class="btn sm" data-act="read-all">Mark all read</button>` : ""}</div></div>
     ${pushCard()}
     ${list.length ? `<div class="alist">${list.map(n => `<div class="alert k-${esc(n.kind)} ${n.read_at ? "" : "unread"}" data-act="open-alert" data-id="${n.id}" role="button" tabindex="0">
-      <span class="ico">${ALERT_ICON[n.kind] || ICON.bell}</span><div class="tmain"><div class="ttitle">${esc(n.title)}</div><div class="tmeta">${esc(n.body)}</div></div><time>${ago(n.created_at)}</time></div>`).join("")}</div>`
-      : emptyState("No alerts yet", "You'll be alerted about overdue and due-soon tasks, follow-ups, escalations, assignments and updates.")}`;
+      <span class="ico">${ALERT_ICON[n.kind] || ICON.bell}</span><div class="tmain"><div class="ttitle">${esc(n.title)}</div><div class="tmeta">${esc(n.body)}</div>
+      <div class="snz"><span class="hint">Snooze:</span><button class="chip" data-act="alert-snooze" data-id="${n.id}" data-when="1h">1 hour</button><button class="chip" data-act="alert-snooze" data-id="${n.id}" data-when="tomorrow">Tomorrow 9:00</button><button class="chip" data-act="alert-snooze" data-id="${n.id}" data-when="monday">Monday 9:00</button> ${del(n)}</div></div><time>${ago(n.created_at)}</time></div>`).join("")}</div>`
+      : emptyState("No alerts yet", "You'll be alerted about overdue and due-soon tasks, follow-ups, escalations, assignments and updates.")}
+    ${snoozed.length ? section("Snoozed", `<div class="list compact">${snoozed.map(n => `<div class="trow"><div class="tmain"><div class="ttitle">${esc(n.title)}</div><div class="tmeta">back ${fmtDateTime(n.snoozed_until, state.tz)}</div></div></div>`).join("")}</div>`, { count: snoozed.length }) : ""}`;
+}
+export async function snoozeAlert(id, when) {
+  const until = snoozeUntil(when, state.tz);
+  const r = await run(sb.rpc("snooze_notification", { p_notification: id, p_until: until }));
+  if (r.error) return toastError(r.error);
+  const n = state.notifications.find(x => x.id === id); if (n) { n.snoozed_until = until; n.read_at = n.read_at || new Date().toISOString(); }
+  toast(`Snoozed until ${fmtDateTime(until, state.tz)}`); renderAlerts(document.getElementById("view"));
 }
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 export const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;

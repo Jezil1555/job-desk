@@ -77,3 +77,12 @@ test("message drafts and share links", () => {
   assert.match(followUpDraft({ subject: "x", tone: "firm", today: T }), /holding up/);
   assert.equal(whatsappLink("+974 5555 1234", "Hi there"), "https://wa.me/97455551234?text=Hi%20there");
 });
+
+test("snooze times are computed in the person's time zone", async () => {
+  const { snoozeUntil } = await import("../../public/js/smart.js");
+  const now = Date.parse("2026-10-30T19:00:00Z"); // Fri 22:00 in Doha
+  assert.equal(snoozeUntil("1h", "Asia/Qatar", now), "2026-10-30T20:00:00.000Z");
+  assert.equal(snoozeUntil("tomorrow", "Asia/Qatar", now), "2026-10-31T06:00:00.000Z"); // Sat 09:00 Doha
+  assert.equal(snoozeUntil("monday", "Asia/Qatar", now), "2026-11-02T06:00:00.000Z");   // Mon 09:00 Doha
+  assert.equal(snoozeUntil("monday", "Asia/Qatar", Date.parse("2026-11-02T03:00:00Z")), "2026-11-09T06:00:00.000Z"); // on a Monday → next Monday
+});

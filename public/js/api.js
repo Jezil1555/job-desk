@@ -136,6 +136,12 @@ export function subscribe(onNotification) {
     if (!state.notifications.some(n => n.id === p.new.id)) state.notifications.unshift(p.new);
     emit("notifications"); onNotification && onNotification(p.new);
   });
+  // snoozed alerts come back as an update (unread again)
+  channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${state.user.id}` }, p => {
+    const i = state.notifications.findIndex(n => n.id === p.new.id);
+    if (i >= 0) state.notifications[i] = p.new; else state.notifications.unshift(p.new);
+    state.notifications.sort((a, b) => b.created_at.localeCompare(a.created_at)); emit("notifications");
+  });
   channel.subscribe();
 }
 export function unsubscribe() { if (channel) sb.removeChannel(channel); channel = null; }

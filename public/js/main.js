@@ -20,7 +20,7 @@ import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integ
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
-import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported } from "./views/other.js";
+import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert } from "./views/other.js";
 
 const cfg = window.JOBDESK_CONFIG;
 const NAV = [
@@ -166,6 +166,7 @@ document.addEventListener("click", async e => {
     case "invite": shareInvite(); break;
     case "copy-link": copyLink(); break;
     case "read-all": markRead(state.notifications.filter(n => !n.read_at).map(n => n.id)); break;
+    case "alert-snooze": snoozeAlert(id, el.dataset.when); break;
     case "open-alert": { const n = state.notifications.find(x => x.id === id); if (!n) break; markRead([n.id]); if (n.task_id) openTask(n.task_id); else if (n.follow_up_id) openFollowUp(n.follow_up_id); else if (n.url) location.hash = n.url.replace(/^\/?#?/, "#"); break; }
   }
 });
