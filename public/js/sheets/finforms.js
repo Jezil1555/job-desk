@@ -1,5 +1,5 @@
 // Finance forms and actions. Nothing is posted, paid or matched unless the person presses the button that says so.
-import { aiCall } from "../assist.js";
+import { aiCall, aiDecision } from "../assist.js";
 import { esc, todayISO, fmtDate, addDays } from "../util.js";
 import { state, nameOf } from "../store.js";
 import { sb, run, savePrefs } from "../api.js";
@@ -476,10 +476,10 @@ export async function handleFinClick(act, el, rerender) {
       const acc = bankingAccount(e), open = fin.statement.filter(x => x.account_id === acc.id && x.status === "unmatched").slice(0, 40);
       const btn = $("finAiCat"); busy(btn, true, "Thinking…");
       const r = await aiCall("categorize", { lines: open.map(x => ({ id: x.id, description: x.description, amount: Number(x.amount) })),
-        accounts: accountsOf(e.id, a => a.is_active && a.id !== acc.id).map(a => ({ id: a.id, code: a.code, name: a.name, type: a.type })) });
+        accounts: accountsOf(e.id, a => a.is_active && a.id !== acc.id).map(a => ({ id: a.id, code: a.code, name: a.name, type: a.type })) }, { type: "fin_account", id: acc.id });
       busy(btn, false);
       if (r.error) return toastError(r.error), true;
-      const u = ui(); u.suggest = Object.assign(u.suggest || {}, Object.fromEntries(r.data.suggestions.map(x => [x.id, x])));
+      const u = ui(); u.suggest = Object.assign(u.suggest || {}, Object.fromEntries(r.data.suggestions.map(x => [x.id, { ...x, proposal_id: r.data.proposal_id || null }])));
       rerender(); toast(`${r.data.suggestions.length} suggestion${r.data.suggestions.length === 1 ? "" : "s"} — check each before posting`); return true;
     }
     case "fin-import-go": await doImport(el); return true;
@@ -590,6 +590,8 @@ export async function handleFinSubmit(form, rerender, submitter) {
       await refresh();
       const line = fin.lines.find(l => l.journal_id === r.data.id && l.account_id === s.account_id);
       const m = await matchStatement(s.id, line.id); busy(btn, false);
+      const sug = (ui().suggest || {})[s.id];
+      if (sug && sug.proposal_id) { aiDecision(sug.proposal_id, sug.account_id === acc ? "accepted" : "edited", { line: s.id, suggested: sug.account_id, chosen: acc }); delete ui().suggest[s.id]; }
       if (m.error) toastError(m.error); await done("Posted and matched"); return true; }
     case "budgetForm": { const e = curEntity(), m = ui().budgetMonth || monthStart(today()), up = [], del = [];
       form.querySelectorAll('input[name^="b-"]').forEach(i => { const aid = i.name.slice(2); if (i.value === "") del.push(aid); else up.push({ entity_id: e.id, account_id: aid, month: m, amount: r2(i.value) }); });

@@ -1,6 +1,7 @@
 // AI assistant. POST {action, input} with the user's session. Opt-in per user; returns suggestions only.
 // Needs the ANTHROPIC_API_KEY secret (Supabase → Edge Functions → Secrets). Optional: AI_MODEL, AI_DAILY_LIMIT.
-// Nothing is stored except a usage row (action, token counts) — never the content.
+// Stored: a usage row (action, token counts) and the suggestion itself in ai_proposals, so you can see what was proposed
+// and what you did with it. The text you send is never stored.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { ACTIONS, buildRequest, parseOutput, callModel } from "./core.js";
 
@@ -21,7 +22,7 @@ Deno.serve(async (req) => {
   const enabled = !!(prof && prof.prefs && prof.prefs.ai_enabled);
   const since = new Date(Date.now() - 86400000).toISOString();
   const { count } = await admin.from("ai_usage").select("id", { count: "exact", head: true }).eq("user_id", uid).gte("created_at", since);
-  let body: { action?: string; input?: Record<string, unknown> } = {};
+  let body: { action?: string; input?: Record<string, unknown>; context?: { type?: string; id?: string } } = {};
   try { body = await req.json(); } catch { return json({ error: "Bad request." }, 400); }
   if (body.action === "status") return json({ configured: !!apiKey, enabled, used_24h: count || 0, limit, model });
   if (!apiKey) return json({ error: "The AI assistant isn't set up yet: add an ANTHROPIC_API_KEY secret to the project." }, 503);
@@ -33,7 +34,13 @@ Deno.serve(async (req) => {
   try {
     const out = await callModel({ apiKey, model, req: reqb });
     await admin.from("ai_usage").insert({ user_id: uid, action: body.action, input_tokens: out.usage.input_tokens ?? null, output_tokens: out.usage.output_tokens ?? null, ok: true });
-    return json({ ...parseOutput(body.action!, out.text, body.input || {}), model });
+    const result = parseOutput(body.action!, out.text, body.input || {});
+    // governance log: the suggestion (never the input) is recorded; the app records what the person did with it
+    const ctx = body.context || {};
+    const TARGETS = ["task", "follow_up", "note", "weekly_review", "fin_account"], UUID = /^[0-9a-f-]{36}$/i;
+    const { data: prop } = await admin.from("ai_proposals").insert({ user_id: uid, action: body.action, proposal: result, model,
+      target_type: TARGETS.includes(ctx.type) ? ctx.type : null, target_id: UUID.test(ctx.id || "") ? ctx.id : null }).select("id").single();
+    return json({ ...result, model, proposal_id: prop?.id || null });
   } catch (e) {
     await admin.from("ai_usage").insert({ user_id: uid, action: body.action, ok: false });
     console.error("assistant", String(e));

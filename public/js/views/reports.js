@@ -1,5 +1,5 @@
 // Reports & Insights — every number here is counted from stored records; nothing is estimated.
-import { aiOn, aiCall } from "../assist.js";
+import { aiOn, aiCall, aiDecision } from "../assist.js";
 import { esc, todayISO, addDays, fmtDate, fmtDateTime, zonedDate } from "../util.js";
 import { isOpen, isOverdue, dueInDays, followUpDue, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
 import { weeklyReport, ownerWorkload, milestoneReport, toCSV, weekStartOf, habitRate, habitDueOn } from "../insights.js";
@@ -140,9 +140,11 @@ export async function handleReportsClick(act, el, rerender) {
     case "rep-ai": {
       const snap = state.ui.weekSnapshot, list = a => (a || []).slice(0, 10).map(t => t.title);
       const btn = $("rvAi"); busy(btn, true, "Writing…");
-      const r = await aiCall("weekly_narrative", { week: `${snap.from} to ${snap.to}`, numbers: snap, completed: list(state.ui.weekCompleted), wins: $("rv-wins").value, issues: $("rv-issues").value, priorities: $("rv-prio").value });
+      const r = await aiCall("weekly_narrative", { week: `${snap.from} to ${snap.to}`, numbers: snap, completed: list(state.ui.weekCompleted), wins: $("rv-wins").value, issues: $("rv-issues").value, priorities: $("rv-prio").value }, { type: "weekly_review" });
       busy(btn, false);
       if (r.error) return toastError(r.error), true;
+      if (state.ui.aiWeekly) aiDecision(state.ui.aiWeekly.id, "rejected", { reason: "drafted again" });
+      state.ui.aiWeekly = r.data.proposal_id ? { id: r.data.proposal_id, text: r.data.text.trim() } : null;
       const ta = $("rv-notes"); ta.value = (ta.value.trim() ? ta.value.trim() + "\n\n" : "") + r.data.text; ta.focus();
       toast("Draft added to Notes — edit it, then save the review"); return true;
     }
@@ -172,5 +174,7 @@ export async function handleReportsSubmit(form, rerender) {
   busy(btn, false);
   if (r.error) return toastError(r.error), true;
   state.reviews = [r.data, ...state.reviews.filter(x => x.week_start !== r.data.week_start)].sort((a, b) => b.week_start.localeCompare(a.week_start));
+  if (state.ui.aiWeekly) { const ai = state.ui.aiWeekly, notes = row.notes || ""; state.ui.aiWeekly = null;
+    aiDecision(ai.id, notes.includes(ai.text) ? "accepted" : notes ? "edited" : "rejected", { saved_week: snap.from }); }
   toast("Weekly review saved"); rerender(); return true;
 }

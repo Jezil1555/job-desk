@@ -55,11 +55,22 @@ function calHtml() {
 function aiHtml() {
   const s = ig(), on = !!state.prefs.ai_enabled, st = s.ai;
   return `<label class="check"><input type="checkbox" id="ig-ai-on" ${on ? "checked" : ""}> Use the AI assistant</label>
-  <p class="hint">When you press an AI button, only the text needed for that request is sent to Anthropic's Claude API (for example the meeting notes you're summarising, or the bank lines you're categorising). Nothing is sent automatically, nothing is stored by Job Desk except a usage count, and every result is a suggestion you review — the assistant can't create tasks, change dates, post entries or send messages.</p>
+  <p class="hint">When you press an AI button, only the text needed for that request is sent to Anthropic's Claude API (for example the meeting notes you're summarising, or the bank lines you're categorising). Nothing is sent automatically. Every result is a suggestion you review — the assistant can't create tasks, change dates or owners, close commitments, post or delete entries, confirm payments or send messages. Job Desk keeps each suggestion and what you did with it (below); the text you sent is not stored.</p>
   ${on ? (!st || st.loading ? `<p class="hint">Checking…</p>` : st.error ? `<p class="bad-text">${esc(st.error)}</p>` : st.configured
     ? `<p>${ICON.done} Ready · ${st.used_24h} of ${st.limit} requests used in the last 24 hours · model ${esc(st.model)}</p>`
     : `<div class="banner warn"><b>Needs an API key.</b> In the Supabase dashboard open Edge Functions → Secrets and add <code>ANTHROPIC_API_KEY</code> with a key from console.anthropic.com. Then reload this page.</div>`) : ""}
-  <p class="hint">Where it helps: rewriting chase messages, suggesting action items from meeting notes, drafting your weekly review, and suggesting accounts for bank lines.</p>`;
+  <p class="hint">Where it helps: rewriting chase messages, suggesting action items from meeting notes, drafting your weekly review, and suggesting accounts for bank lines.</p>
+  ${aiHistoryHtml()}`;
+}
+const AI_ACTION = { draft_message: "Message draft", action_items: "Action items", weekly_narrative: "Weekly summary", categorize: "Bank-line accounts" };
+const AI_STATUS = { proposed: ["Waiting for you", "inv-unpaid"], accepted: ["Accepted", "inv-paid"], edited: ["Accepted with edits", "inv-partial"], rejected: ["Rejected", "inv-void"], expired: ["Expired (not used)", "inv-void"] };
+function aiHistoryHtml() {
+  const s = ig();
+  if (s.aiLog === undefined) { s.aiLog = null; run(sb.from("ai_proposals").select("id, action, status, created_at, decided_at, decisions").order("created_at", { ascending: false }).limit(20)).then(r => { s.aiLog = r.data || []; repaint(); }); }
+  if (!s.aiLog) return `<h3 class="sub-h">AI history</h3><p class="hint">Loading…</p>`;
+  return `<h3 class="sub-h">AI history</h3>${s.aiLog.length ? `<div class="tablewrap"><table class="rtable"><thead><tr><th>When</th><th>Suggestion</th><th>Your decision</th></tr></thead><tbody>
+    ${s.aiLog.map(p => `<tr><td>${fmtDateTime(p.created_at, state.tz)}</td><td>${AI_ACTION[p.action] || esc(p.action)}</td><td><span class="pill ${AI_STATUS[p.status][1]}">${AI_STATUS[p.status][0]}</span>${p.decided_at && p.status !== "expired" ? ` <small class="hint">${ago(p.decided_at)}</small>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="hint">No AI suggestions yet.</p>`}`;
 }
 export async function handleIntegrationsClick(act, el) {
   const s = ig();

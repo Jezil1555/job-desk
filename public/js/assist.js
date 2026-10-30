@@ -20,7 +20,14 @@ export async function aiStatus(force = false) {
   statusCache = r.error ? { error: r.error } : r.data; statusAt = Date.now();
   return statusCache;
 }
-export async function aiCall(action, input) {
+export async function aiCall(action, input, context) {
   if (!aiOn()) return { error: "Turn on the AI assistant in Settings → Integrations first." };
-  const r = await invoke({ action, input }); statusAt = 0; return r;
+  const r = await invoke({ action, input, context }); statusAt = 0; return r;
 }
+/** Record what the person did with an AI suggestion: accepted as-is, accepted with edits, or rejected. Best-effort; never blocks the work. */
+export async function aiDecision(proposalId, decision, detail) {
+  if (!proposalId) return;
+  try { await sb.rpc("record_ai_decision", { p_proposal: proposalId, p_decision: decision, p_detail: detail || null }); } catch (e) { /* logged server-side only when it succeeds */ }
+}
+/** Compare final text with the AI text: same → accepted, changed → edited. */
+export const textDecision = (aiText, finalText) => (String(aiText || "").trim() === String(finalText || "").trim() ? "accepted" : "edited");

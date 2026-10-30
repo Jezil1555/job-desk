@@ -49,3 +49,4 @@ create or replace function public.is_ws_member(ws uuid) returns boolean language
   select exists (select 1 from public.workspace_members where workspace_id = ws and user_id = (select auth.uid())) $$;
 create or replace function public.can_write_ws(ws uuid) returns boolean language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.workspace_members where workspace_id = ws and user_id = (select auth.uid()) and role in ('owner','member')) $$;
+create or replace function cron.unschedule(n text) returns boolean language sql as $$ select true $$;

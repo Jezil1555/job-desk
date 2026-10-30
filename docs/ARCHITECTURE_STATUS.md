@@ -48,9 +48,12 @@ Tests: 18 live DB checks (rolled back), rollback verified locally, 4 browser che
 - Met: server-side scheduled jobs (pg_cron), idempotency via `*_reminded_for` markers, user time zones, escalation dates on follow-ups, in-app history, phone push.
 - Gap: **delivery tracking and retry** (a failed push is not recorded or retried), **snooze**.
 
-## 9. AI governance — Partial
-- Met: the assistant only returns suggestions; it cannot post, pay, delete, change dates or owners, close commitments or send anything. Usage is counted.
-- Gap: **recording each proposal and whether you accepted or rejected it**.
+## 9. AI governance — Met (increment 4, 30 Oct)
+The assistant only returns suggestions: it has no route to post entries, confirm payments, delete records, change deadlines or owners, close commitments
+or send anything — those stay behind the person's own actions and the database rules. Every suggestion is recorded in `ai_proposals` (output only, never
+the input text) and the app records what was done with it: accepted, accepted with edits, or rejected (with detail); untouched suggestions expire after
+14 days. Decisions can only be added through `record_ai_decision` by the owner of the suggestion. History is shown in Settings → AI assistant.
+Tests: 11 live DB checks (rolled back), rollback verified locally, 4 browser checks.
 
 ## 10. Technical governance — Partial
 - Met: one shared task engine; migrations in the repo with an implementation log; RLS and cross-entity isolation tested on live (rolled back).
@@ -68,7 +71,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 1. ~~Task accountability~~ — done.
 2. ~~Commitments~~ — done.
 3. ~~Project baselines~~ — done.
-4. **AI proposal log** — every AI suggestion recorded with accept / edit / reject.
+4. ~~AI proposal log~~ — done.
 5. **Notification reliability** — delivery log, retry with backoff, snooze.
 6. **Inter-entity transactions** — due-to / due-from between any two books, matching check.
 7. **Dlusso production costing** — goods received, consumption to WIP, finished-order cost, authorised negative-stock exception.

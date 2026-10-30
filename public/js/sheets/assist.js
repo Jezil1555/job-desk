@@ -5,7 +5,7 @@ import { state, followUpById, contactById, wsById, nameOf } from "../store.js";
 import { sb, run } from "../api.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, busy } from "../ui.js";
 import { followUpDraft, whatsappLink, mailtoLink } from "../smart.js";
-import { aiOn, aiCall } from "../assist.js";
+import { aiOn, aiCall, aiDecision, textDecision } from "../assist.js";
 
 let d = null;
 export function openDraft(kind, id) {
@@ -39,9 +39,16 @@ function render(sh) {
   </div>`;
 }
 const sync = () => { if (!$("dr-text")) return; d.text = $("dr-text").value; d.tone = $("dr-tone").value; const ch = $("dr-channel").value; const to = $("dr-to").value.trim(); if (d.channel === "email") d.email = to; else d.phone = to; d.channel = ch; };
+// AI governance: once the person uses the draft (copy, open or log), record whether they kept the AI text or edited it
+function decideAi(how) {
+  if (!d.ai) return;
+  const p = d.ai; d.ai = null;
+  aiDecision(p.id, textDecision(p.text, d.text), { used_via: how });
+}
 export async function handleAssistClick(act, el) {
   if (!act.startsWith("dr-") || !d) return false;
   sync();
+  if (act === "dr-copy" || act === "dr-open" || act === "dr-log") decideAi(act.slice(3));
   if (act === "dr-copy") { try { await navigator.clipboard.writeText(d.text); toast("Copied"); } catch (e) { toastError("Couldn't copy — select the text and copy it."); } return true; }
   if (act === "dr-open") {
     if (d.channel === "whatsapp" && !String(d.phone || "").replace(/\D/g, "")) { window.open("https://wa.me/?text=" + encodeURIComponent(d.text), "_blank"); return true; }
@@ -51,9 +58,12 @@ export async function handleAssistClick(act, el) {
   }
   if (act === "dr-ai") {
     const btn = $("drAi"); busy(btn, true, "Writing…");
-    const r = await aiCall("draft_message", { to: d.to, subject: d.subject, direction: d.direction, expected: d.expected, last_contact: d.last, tone: d.tone, channel: d.channel, sender: d.sender });
+    const r = await aiCall("draft_message", { to: d.to, subject: d.subject, direction: d.direction, expected: d.expected, last_contact: d.last, tone: d.tone, channel: d.channel, sender: d.sender },
+      { type: d.kind === "followup" ? "follow_up" : "task", id: d.id });
     busy(btn, false);
     if (r.error) return toastError(r.error), true;
+    if (d.ai) aiDecision(d.ai.id, "rejected", { reason: "rewritten again" });
+    d.ai = r.data.proposal_id ? { id: r.data.proposal_id, text: r.data.text } : null;
     d.text = r.data.text; rerenderSheet(); toast("Draft rewritten — check it before sending"); return true;
   }
   if (act === "dr-log") {
@@ -71,6 +81,7 @@ export async function handleAssistClick(act, el) {
 export function handleAssistChange(e) {
   if (!d || !["dr-tone", "dr-channel"].includes(e.target.id)) return false;
   const prevTone = d.tone; sync();
+  if (e.target.id === "dr-tone" && prevTone !== d.tone && d.ai) { aiDecision(d.ai.id, "rejected", { reason: "switched back to a standard draft" }); d.ai = null; }
   if (e.target.id === "dr-tone" && prevTone !== d.tone) d.text = followUpDraft({ kind: d.direction, to: d.to, subject: d.subject, expected: d.expected, lastContact: d.last, sender: d.sender, workspace: d.ws, tone: d.tone, today: todayISO(state.tz) });
   rerenderSheet(); return true;
 }

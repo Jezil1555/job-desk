@@ -144,10 +144,11 @@ def handle(route):
         if body.get("action") == "status": return reply({"configured": True, "enabled": on, "used_24h": len(AI_CALLS) - 1, "limit": 60, "model": "claude-sonnet-5-5"})
         if not on: return reply({"error": "Turn on the AI assistant in Settings first."}, 403)
         a, inp = body["action"], body.get("input") or {}
-        if a == "action_items": return reply({"items": [{"title": "Confirm inspection slot with surveyor", "owner": "Adil"}, {"title": "Share revised PO", "owner": None}]})
-        if a == "draft_message": return reply({"text": "Hi Rashid, AI-polished: please confirm the dispatch date today."})
-        if a == "weekly_narrative": return reply({"text": "This week I closed out the Kite BOM material readiness."})
-        if a == "categorize": return reply({"suggestions": [{"id": l["id"], "account_id": next(x["id"] for x in inp["accounts"] if x["code"] == "6900"), "confidence": "medium"} for l in inp["lines"]]})
+        pid = str(uuid.uuid4()); AI_PROPOSALS[pid] = {"action": a, "context": body.get("context"), "decisions": []}
+        if a == "action_items": return reply({"items": [{"title": "Confirm inspection slot with surveyor", "owner": "Adil"}, {"title": "Share revised PO", "owner": None}], "proposal_id": pid})
+        if a == "draft_message": return reply({"text": "Hi Rashid, AI-polished: please confirm the dispatch date today.", "proposal_id": pid})
+        if a == "weekly_narrative": return reply({"text": "This week I closed out the Kite BOM material readiness.", "proposal_id": pid})
+        if a == "categorize": return reply({"suggestions": [{"id": l["id"], "account_id": next(x["id"] for x in inp["accounts"] if x["code"] == "6900"), "confidence": "medium"} for l in inp["lines"]], "proposal_id": pid})
         return reply({"error": "Unknown action."}, 400)
     if path.startswith("/rest/v1/rpc/"):
         fn = path.rsplit("/", 1)[1]; body = json.loads(req.post_data or "{}")
@@ -162,6 +163,8 @@ def handle(route):
         if fn.startswith("fin_"):
             try: return reply(fin_rpc(fn, body))
             except FinError as e: return err(str(e))
+        if fn == "record_ai_decision":
+            AI_PROPOSALS[body["p_proposal"]]["decisions"].append(body["p_decision"]); return reply(None)
         if fn == "set_project_baseline":
             pj = next(x for x in DB["projects"] if x["id"] == body["p_project"])
             if pj.get("baselined_at") and len((body.get("p_reason") or "").strip()) < 3: return err("reason_required: give a reason for re-baselining")
@@ -381,6 +384,7 @@ def fin_rpc(fn, b):
         st["status"] = "matched"; st["matched_line_id"] = l["id"]; l["statement_line_id"] = st["id"]; return None
     raise FinError("not implemented in test fake: " + fn)
 
+AI_PROPOSALS = {}
 GCAL = {"configured": False, "sync": None, "calls": []}
 results, errors = [], []
 def check(name, cond, detail=""):
@@ -510,7 +514,11 @@ with sync_playwright() as pw:
     page.select_option("#nf-ws", WS[1])
     page.fill("#nf-title", "Weekly logistics review")
     page.fill("#nf-body", "Discussed delays.\n- [ ] Send revised PO to supplier @Adil\n- [x] Invoice already sent\nAction: book inspection slot")
-    page.click("#nfSave"); page.wait_for_timeout(500)
+    page.click("#nfSave")
+    for _ in range(40):
+        if any(n["title"] == "Weekly logistics review" for n in DB["notes"]): break
+        page.wait_for_timeout(100)
+    page.wait_for_timeout(200)
     mtg = next((n for n in DB["notes"] if n["title"] == "Weekly logistics review"), None)
     check("meeting note saved with kind=meeting and today's date", mtg and mtg["kind"] == "meeting" and mtg["meeting_date"])
     page.click('[data-act="note-actions"]'); page.wait_for_selector(".actions-review")
@@ -722,14 +730,23 @@ with sync_playwright() as pw:
     calls = len(AI_CALLS); page.click("#nfAi"); page.wait_for_selector(".actions-review")
     check("AI action items arrive as suggestions for review (nothing created yet)", "Suggested by AI" in page.inner_text(".actions-review") and page.locator(".actions-review li").count() == 2 and len(AI_CALLS) == calls + 1)
     check("AI owner name matched to the workspace member", page.input_value("#ai-owner-0") == ADIL)
+    page.fill("#ai-title-0", "Confirm inspection slot with surveyor (Sun)"); page.uncheck('[data-act="ai-toggle"][data-i="1"]')
+    page.click('[data-act="ai-create"]'); page.wait_for_timeout(900)
+    ai_items = [v for v in AI_PROPOSALS.values() if v["action"] == "action_items"]
+    check("AI log: edited and partly skipped action items recorded as 'edited'", ai_items and ai_items[-1]["decisions"] == ["edited"] and (ai_items[-1]["context"] or {}).get("type") == "note", str(ai_items[-1:]))
     page.keyboard.press("Escape")
     page.goto(BASE + "/#/reports/weekly"); page.wait_for_selector("#rvAi"); page.click("#rvAi"); page.wait_for_timeout(400)
     check("AI weekly summary is placed in the notes box, not saved", "Kite BOM" in page.input_value("#rv-notes") and not any("Kite BOM material readiness" in (r.get("notes") or "") for r in DB["weekly_reviews"]))
+    page.click("#rvSave"); page.wait_for_timeout(600)
+    wk = [v for v in AI_PROPOSALS.values() if v["action"] == "weekly_narrative"]
+    check("AI log: weekly summary kept as written recorded as 'accepted'", wk and wk[-1]["decisions"] == ["accepted"], str(wk[-1:]))
     page.goto(BASE + f"/#/finance/{FE1}/banking"); page.wait_for_selector("#finAiCat"); page.click("#finAiCat"); page.wait_for_timeout(500)
     check("AI bank-line suggestion shown as a button (nothing posted)", page.locator('[data-act="fin-stmt-entry"][data-acc]').count() >= 1 and not any(j["memo"] == "BANK CHARGE" for j in DB["fin_journals"]))
     page.click('[data-act="fin-stmt-entry"][data-acc]'); page.wait_for_selector("#finStmtEntry")
     check("suggested account is pre-selected for review", page.input_value("#fse-acc") == f"{FE1[:8]}-acc-6900")
     page.keyboard.press("Escape")
+    page.goto(BASE + "/#/settings"); page.wait_for_selector("#ig-ai"); page.wait_for_timeout(400)
+    check("Settings explains the AI can't act on its own and shows AI history", "can't create tasks, change dates or owners" in page.inner_text("#ig-ai") and "AI history" in page.inner_text("#ig-ai"))
 
     # Settings: hide a dashboard section persists to profile prefs
     page.goto(BASE + "/#/settings"); page.wait_for_selector(".settings")

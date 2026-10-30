@@ -4,7 +4,7 @@ import { esc, todayISO, fmtDate, fmtDateTime, ago } from "../util.js";
 import { extractActionItems, fmtBytes, safeFileName } from "../insights.js";
 import { state, wsById, projectById, contactById, followUpById, noteById, docById, canWrite, activeWorkspaces, membersOf, nameOf, shortName } from "../store.js";
 import { sb, run, linksFor, addLink, removeLink, uploadDocument, documentUrl, deleteDocument, createTask, loadAll } from "../api.js";
-import { aiOn, aiCall } from "../assist.js";
+import { aiOn, aiCall, aiDecision } from "../assist.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, busy } from "../ui.js";
 
 export const NOTE_KIND = { note: "Note", meeting: "Meeting notes", decision: "Decision" };
@@ -243,27 +243,29 @@ export async function handleKnowledgeClick(act, el) {
       const n = noteById(k.noteId), body = $("nf-body") ? $("nf-body").value : n.body;
       if (!body.trim()) return toastError("Write some notes first."), true;
       const btn = $("nfAi"); busy(btn, true, "Reading notes…");
-      const r = await aiCall("action_items", { notes: body, people: membersOf(n.workspace_id).map(m => nameOf(m.user_id)) });
+      const r = await aiCall("action_items", { notes: body, people: membersOf(n.workspace_id).map(m => nameOf(m.user_id)) }, { type: "note", id: n.id });
       busy(btn, false);
       if (r.error) return toastError(r.error), true;
       k.actions = r.data.items.map(a => {
         const m = a.owner && membersOf(n.workspace_id).find(x => nameOf(x.user_id).toLowerCase().startsWith(a.owner.toLowerCase().split(" ")[0]));
-        return { title: a.title, owner_id: m ? m.user_id : state.user.id, on: true };
+        return { title: a.title, owner_id: m ? m.user_id : state.user.id, on: true, ai_title: a.title, ai_owner: m ? m.user_id : state.user.id };
       });
-      k.aiSource = true; rerenderSheet(); return true;
+      k.aiSource = true; k.aiProposal = r.data.proposal_id || null; rerenderSheet(); return true;
     }
     case "ai-toggle": k.actions[+el.dataset.i].on = el.checked; return true;
-    case "ai-cancel": k.actions = null; rerenderSheet(); return true;
+    case "ai-cancel": if (k.aiSource && k.aiProposal) aiDecision(k.aiProposal, "rejected", { reason: "dismissed all suggestions" }); k.aiProposal = null; k.actions = null; rerenderSheet(); return true;
     case "ai-create": {
-      const n = noteById(k.noteId); let made = 0, fails = [];
+      const n = noteById(k.noteId); let made = 0, fails = [], changed = 0, skipped = 0;
       for (let i = 0; i < k.actions.length; i++) {
-        const a = k.actions[i]; if (!a.on) continue;
-        const title = val(`ai-title-${i}`); if (!title) continue;
+        const a = k.actions[i]; if (!a.on) { skipped++; continue; }
+        const title = val(`ai-title-${i}`); if (!title) { skipped++; continue; }
+        if (a.ai_title !== undefined && (title !== a.ai_title || (val(`ai-owner-${i}`) || state.user.id) !== a.ai_owner)) changed++;
         const r = await createTask({ title, workspace_id: n.workspace_id, status: "not_started", priority: "medium", owner_id: val(`ai-owner-${i}`) || state.user.id, description: `From meeting: ${n.title}${n.meeting_date ? " (" + fmtDate(n.meeting_date) + ")" : ""}` });
         if (r.error) { fails.push(`${title}: ${r.error}`); continue; }
         await addLink(n.workspace_id, "note", n.id, "task", r.data.id); made++;
       }
-      k.actions = null; rerenderSheet();
+      if (k.aiSource && k.aiProposal) aiDecision(k.aiProposal, made === 0 ? "rejected" : changed || skipped ? "edited" : "accepted", { created: made, edited: changed, skipped });
+      k.aiProposal = null; k.actions = null; rerenderSheet();
       toast(`${made} task(s) created and linked to this meeting`);
       if (fails.length) toastError(fails[0]);
       return true;
