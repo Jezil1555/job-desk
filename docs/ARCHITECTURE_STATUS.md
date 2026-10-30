@@ -36,10 +36,15 @@ each side actually recorded (no assumed rate). Reversal reverses both sides. `fi
 recorded transactions (Matched / Mismatch). Partner accounts (Jezz ↔ Dlusso) remain as built.
 Tests: 21 checks run both locally and live (rolled back), rollback verified locally, 4 browser checks.
 
-## 6. Inventory and costing — Partial
-- Met: stock moves are separate from cash, average cost, auditable move history, negative stock is refused.
-- Gap: fabric receipt separate from purchase (goods-received), **consumption into work in progress**, **finished-order costing**, and an
-  authorised negative-stock exception with a recorded reason.
+## 6. Inventory and costing — Met (increment 7, 31 Oct)
+Stock moves are separate from cash, valued at average cost, with a full move history. **Goods received** (GRN-0001…) put fabric into stock at the
+delivery-note cost against 2050 "Goods received, not yet billed"; the supplier's bill is coded to 2050 and clears it, so stock is never counted twice.
+**Production orders** (JOB-0001…): fabric issued moves from inventory to 1250 Work in progress at average cost; stitching, trims and other costs are
+added from a bank, cash, payable or expense account; completing the order moves the total job cost to cost of goods sold, and the order is then closed
+to new costs. Material and other costs per order are shown from posted rows (`fin_production_summary`). Negative stock is refused unless the **owner**
+authorises it with a reason, recorded in `fin_stock_exceptions` with the shortfall. Every cost and receipt is reversed by a document action (reason
+required, material goes back into stock); a receipt already used can't be reversed and an order with costs can't be cancelled.
+Tests: 24 checks run both locally and live (rolled back), rollback verified locally, 13 browser checks.
 
 ## 7. Project progress — Met (increment 3, 30 Oct)
 Milestone weights; planned and actual dates stored separately; **baselines** (project start/target and each milestone) frozen by "Set baseline".
@@ -80,12 +85,12 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 4. ~~AI proposal log~~ — done.
 5. ~~Notification reliability~~ — done.
 6. ~~Inter-entity transactions~~ — done.
-7. **Dlusso production costing** — goods received, consumption to WIP, finished-order cost, authorised negative-stock exception.
+7. ~~Dlusso production costing~~ — done.
 8. **Foreign currency** — FX invoices/bills, realised gain/loss, month-end revaluation.
 9. **Templates and project-specific fields** on the shared task engine.
 10. **Rollback scripts** for each migration with a tested rollback procedure.
 
 ## Deployment status
-- App: Render, auto-deploy from `main` (latest: live Google Calendar sync).
+- App: Render, auto-deploy from `main` (latest: production costing).
 - Database: all migrations in `supabase/migrations` applied to project `lvusersarnzzamdgvxgm`.
 - Edge functions: `send-push`, `calendar-feed`, `assistant`, `gcal-sync`.

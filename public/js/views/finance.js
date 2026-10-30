@@ -6,12 +6,13 @@ import { ICON, emptyState, section } from "../ui.js";
 import { fin, entityById, accById, partyById, finRole, canWriteFin, isFinOwner, accountsOf, moneyAccounts, linesOf, linesOfJournal, stockOf, itemById } from "../finapi.js";
 import { renderPartners } from "./partners.js";
 import { renderIntercompany } from "./intercompany.js";
+import { renderProduction } from "./production.js";
 import { money, r2, ACCOUNT_TYPES, SUBTYPE_LABEL, trialBalance, profitAndLoss, balanceSheet, cashFlow, ledger, invoiceStatus, INVOICE_STATUS_LABEL, aging, AGING_LABEL,
   budgetVsActual, monthStart, monthEnd, monthsBetween, fiscalYearStart, convert, natural, matchCandidates } from "../finance.js";
 
 export const FIN_TABS = { overview: "Overview", entries: "Entries", invoices: "Invoices", bills: "Bills", payments: "Payments", banking: "Banking", accounts: "Accounts",
-  people: "Customers & suppliers", stock: "Stock", partners: "Partner accounts", intercompany: "Inter-entity", budgets: "Budgets", reports: "Reports", settings: "Settings" };
-const BUSINESS_ONLY = new Set(["stock", "partners"]);
+  people: "Customers & suppliers", stock: "Stock", production: "Production", partners: "Partner accounts", intercompany: "Inter-entity", budgets: "Budgets", reports: "Reports", settings: "Settings" };
+const BUSINESS_ONLY = new Set(["stock", "production", "partners"]);
 export const ui = () => (state.ui.fin = state.ui.fin || { period: "this_month", from: null, to: null, report: "pl", jq: "", jstatus: "", invStatus: "open", bankAcc: null, ledgerAcc: null, budgetMonth: null });
 export const rates = () => Object.assign({ base: "QAR", INR: 26.10 }, state.prefs.fin_rates || {});
 const today = () => todayISO(state.tz);
@@ -77,7 +78,7 @@ export function renderFinance(view, eid, tab = "overview", sub) {
   if (!FIN_TABS[tab] || (BUSINESS_ONLY.has(tab) && e.kind === "personal")) tab = "overview";
   const w = canWriteFin(eid);
   const tabs = Object.entries(FIN_TABS).filter(([k]) => !(BUSINESS_ONLY.has(k) && e.kind === "personal")).map(([k, l]) => [k, e.kind === "personal" && k === "invoices" ? "Money owed to me" : e.kind === "personal" && k === "bills" ? "Bills" : l]);
-  const body = { overview, entries, invoices: x => invoicesTab(x, "sale"), bills: x => invoicesTab(x, "purchase"), payments, banking, accounts, people, stock, partners: x => renderPartners(x, sub), intercompany: renderIntercompany, budgets, reports, settings }[tab](e);
+  const body = { overview, entries, invoices: x => invoicesTab(x, "sale"), bills: x => invoicesTab(x, "purchase"), payments, banking, accounts, people, stock, partners: x => renderPartners(x, sub), intercompany: renderIntercompany, production: renderProduction, budgets, reports, settings }[tab](e);
   view.innerHTML = `
   <div class="page-head"><div><p class="crumb"><a href="#/finance">Finance</a></p><h1>${esc(e.name)} <span class="chip">${e.base_currency}</span></h1>
     <p class="sub">${e.kind === "personal" ? `${ICON.lock} Personal books` : "Business books"} · you are ${esc(finRole(eid) || "—")}${e.lock_date ? ` · locked to ${fmtDate(e.lock_date)}` : ""}${e.archived ? " · archived" : ""}</p></div>
@@ -126,7 +127,7 @@ function overview(e) {
 }
 
 function journalAmount(j) { return r2(linesOfJournal(j.id).reduce((s, l) => s + Number(l.debit), 0)); }
-const SOURCE_LABEL = { manual: "Entry", opening: "Opening", invoice: "Invoice", bill: "Bill", payment: "Payment", reversal: "Reversal", stock: "Stock", partner: "Partner", intercompany: "Inter-entity" };
+const SOURCE_LABEL = { manual: "Entry", opening: "Opening", invoice: "Invoice", bill: "Bill", payment: "Payment", reversal: "Reversal", stock: "Stock", partner: "Partner", intercompany: "Inter-entity", receipt: "Goods received", production: "Production" };
 function journalTable(e, js) {
   if (!js.length) return `<p class="calm">No entries yet.</p>`;
   return `<div class="tablewrap"><table class="rtable"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Type</th><th class="num">Amount</th></tr></thead><tbody>

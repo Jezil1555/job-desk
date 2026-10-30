@@ -39,7 +39,8 @@ def fin_fixture():
              "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, "created_at": iso(now)}]
     return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
-            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": []}
+            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": [],
+            "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -379,7 +380,68 @@ def ic_rpc(fn, b):
     if fn == "fin_ic_reverse":
         t = next(x for x in DB["fin_ic_txns"] if x["id"] == b["p_txn"]); t["status"] = "reversed"; t["reversal_reason"] = b["p_reason"]; return None
     raise FinError("not implemented: " + fn)
+def prod_acc(eid, key):
+    spec = {"wip": ("1250", "Work in progress", "asset"), "grni": ("2050", "Goods received, not yet billed", "liability"), "inventory": ("1200", "Inventory", "asset"), "cogs": ("5000", "Cost of goods sold", "expense")}[key]
+    a = next((x for x in DB["fin_accounts"] if x["entity_id"] == eid and x.get("system_key") == key), None)
+    if not a:
+        a = {"id": f"{eid[:8]}-acc-{spec[0]}", "entity_id": eid, "code": spec[0], "name": spec[1], "type": spec[2], "subtype": "other", "system_key": key, "is_active": True, "description": None}; DB["fin_accounts"].append(a)
+    return a["id"]
+def on_hand(item):
+    ms = [m for m in DB["fin_stock_moves"] if m["item_id"] == item]; q = sum(float(m["qty"]) for m in ms); v = sum(float(m["qty"]) * float(m["unit_cost"]) for m in ms)
+    return round(q, 3), (v / q if q > 0 else 0)
+def add_move(eid, item, date, qty, cost, source, jid, note, order=None, exc=None):
+    mid = str(uuid.uuid4()); DB["fin_stock_moves"].append({"id": mid, "entity_id": eid, "item_id": item, "move_date": date, "qty": qty, "unit_cost": cost, "source": source, "journal_id": jid, "note": note,
+        "production_order_id": order, "exception_id": exc, "created_at": iso(now)}); return mid
+def prod_rpc(fn, b):
+    today = today_qa()
+    if fn == "fin_goods_receipt":
+        p = b["p"]; it = next(x for x in DB["fin_items"] if x["id"] == p["item_id"]); e = it["entity_id"]; gid = str(uuid.uuid4())
+        no = "GRN-" + str(len([g for g in DB["fin_goods_receipts"] if g["entity_id"] == e]) + 1).zfill(4); val = round(float(p["qty"]) * float(p["unit_cost"]), 2); d = p.get("receipt_date") or today
+        jid = sys_journal(e, d, no + " received", "receipt", gid, [{"account_id": prod_acc(e, "inventory"), "debit": val}, {"account_id": prod_acc(e, "grni"), "party_id": p.get("party_id"), "credit": val}])
+        mid = add_move(e, it["id"], d, float(p["qty"]), float(p["unit_cost"]), "receipt", jid, no)
+        DB["fin_goods_receipts"].append({"id": gid, "entity_id": e, "receipt_no": no, "item_id": it["id"], "party_id": p.get("party_id"), "receipt_date": d, "qty": float(p["qty"]), "unit_cost": float(p["unit_cost"]),
+            "reference": p.get("reference"), "journal_id": jid, "stock_move_id": mid, "status": "posted", "reversal_reason": None, "created_at": iso(now)}); return gid
+    if fn == "fin_production_open":
+        e = b["p_entity"]; oid = str(uuid.uuid4()); no = "JOB-" + str(len([o for o in DB["fin_production_orders"] if o["entity_id"] == e]) + 1).zfill(4)
+        DB["fin_production_orders"].insert(0, {"id": oid, "entity_id": e, "order_no": no, "title": b["p_title"], "party_id": b.get("p_party"), "job_ref": b.get("p_job_ref"), "status": "open", "opened_on": b.get("p_date") or today,
+            "completed_on": None, "completion_journal_id": None, "total_cost": None, "invoice_id": None, "notes": None, "cancel_reason": None, "created_at": iso(now)}); return oid
+    if fn in ("fin_production_issue", "fin_production_add_cost", "fin_production_complete", "fin_production_cancel"):
+        o = next(x for x in DB["fin_production_orders"] if x["id"] == b["p_order"]); e = o["entity_id"]
+        if o["status"] != "open": raise FinError("order_closed: the order is " + o["status"])
+        posted = [c for c in DB["fin_production_costs"] if c["order_id"] == o["id"] and c["status"] == "posted"]
+        if fn == "fin_production_issue":
+            qty = float(b["p_qty"]); q, avg = on_hand(b["p_item"]); exc = None
+            if q < qty:
+                if not b.get("p_authorise_reason"): raise FinError(f"insufficient_stock: only {q} in stock")
+                exc = str(uuid.uuid4()); DB["fin_stock_exceptions"].insert(0, {"id": exc, "entity_id": e, "item_id": b["p_item"], "qty_short": round(qty - max(q, 0), 3), "reason": b["p_authorise_reason"], "authorised_by": ME, "authorised_at": iso(now)})
+            val = round(qty * avg, 2); cid = str(uuid.uuid4()); d = b.get("p_date") or today
+            jid = sys_journal(e, d, o["order_no"] + " material", "production", cid, [{"account_id": prod_acc(e, "wip"), "debit": val}, {"account_id": prod_acc(e, "inventory"), "credit": val}])
+            mid = add_move(e, b["p_item"], d, -qty, avg, "production", jid, o["order_no"], o["id"], exc)
+            DB["fin_production_costs"].append({"id": cid, "order_id": o["id"], "entity_id": e, "kind": "material", "cost_date": d, "item_id": b["p_item"], "qty": qty, "unit_cost": avg, "amount": val, "source_account_id": None,
+                "note": b.get("p_note"), "journal_id": jid, "stock_move_id": mid, "exception_id": exc, "status": "posted", "reversal_reason": None, "created_at": iso(now)}); return cid
+        if fn == "fin_production_add_cost":
+            cid = str(uuid.uuid4()); d = b.get("p_date") or today; amt = round(float(b["p_amount"]), 2)
+            jid = sys_journal(e, d, o["order_no"] + " cost", "production", cid, [{"account_id": prod_acc(e, "wip"), "debit": amt}, {"account_id": b["p_account"], "credit": amt}])
+            DB["fin_production_costs"].append({"id": cid, "order_id": o["id"], "entity_id": e, "kind": "other", "cost_date": d, "item_id": None, "qty": None, "unit_cost": None, "amount": amt, "source_account_id": b["p_account"],
+                "note": b["p_note"], "journal_id": jid, "stock_move_id": None, "exception_id": None, "status": "posted", "reversal_reason": None, "created_at": iso(now)}); return cid
+        if fn == "fin_production_complete":
+            tot = round(sum(float(c["amount"]) for c in posted), 2)
+            if tot <= 0: raise FinError("no_costs")
+            jid = sys_journal(e, b["p_date"], o["order_no"] + " completed", "production", o["id"], [{"account_id": prod_acc(e, "cogs"), "debit": tot}, {"account_id": prod_acc(e, "wip"), "credit": tot}])
+            o.update(status="completed", completed_on=b["p_date"], completion_journal_id=jid, total_cost=tot); return tot
+        if posted: raise FinError("has_costs: reverse the material and costs first")
+        o.update(status="cancelled", cancel_reason=b["p_reason"]); return None
+    if fn == "fin_production_reverse_cost":
+        c = next(x for x in DB["fin_production_costs"] if x["id"] == b["p_cost"]); j = next(x for x in DB["fin_journals"] if x["id"] == c["journal_id"])
+        ls = [l for l in DB["fin_lines"] if l["journal_id"] == j["id"]]
+        nid = sys_journal(c["entity_id"], j["entry_date"], "Reversal", "reversal", j["id"], [{"account_id": l["account_id"], "debit": l["credit"], "credit": l["debit"]} for l in ls]); j["reversed_by"] = nid
+        if c["kind"] == "material": add_move(c["entity_id"], c["item_id"], c["cost_date"], c["qty"], c["unit_cost"], "production", nid, "Returned", c["order_id"])
+        c.update(status="reversed", reversal_reason=b["p_reason"]); return None
+    if fn == "fin_goods_receipt_reverse":
+        g = next(x for x in DB["fin_goods_receipts"] if x["id"] == b["p_receipt"]); g.update(status="reversed", reversal_reason=b["p_reason"]); return None
+    raise FinError("not implemented: " + fn)
 def fin_rpc(fn, b):
+    if fn.startswith("fin_production_") or fn.startswith("fin_goods_receipt"): return prod_rpc(fn, b)
     if fn.startswith("fin_ic_"): return ic_rpc(fn, b)
     if fn.startswith("fin_partner_"): return partner_rpc(fn, b)
     if fn == "fin_post_journal":
@@ -987,6 +1049,44 @@ with sync_playwright() as pw:
     page.wait_for_selector("#ic-pos .rtable"); page.wait_for_timeout(300)
     check("balances table shows the other books and 'Matched'", "The Burgery Thrissur" in page.inner_text("#ic-pos") and "matched" in page.inner_text("#ic-pos").lower())
     shot(page, "28-intercompany", True)
+    ctx.close()
+
+    # ---------- Increment 7: production costing ----------
+    ctx, page = new_page(b, 1366, 900)
+    WOOL = str(uuid.uuid4())
+    DB["fin_items"].append({"id": WOOL, "entity_id": FE1, "name": "Wool suiting", "sku": "WS-1", "unit": "m", "inventory_account_id": None, "archived": False, "created_at": iso(now)})
+    page.goto(BASE + f"/#/finance/{FE1}/production"); page.wait_for_selector('[data-act="prod-receive"]')
+    check("business books have a Production tab", page.locator(f'.fin-tabs a[href="#/finance/{FE1}/production"]').count() == 1)
+    page.click('[data-act="prod-receive"]'); page.wait_for_selector("#prodGrnForm")
+    page.select_option("#gr-item", WOOL); page.fill("#gr-qty", "10"); page.click("#grSave"); page.wait_for_timeout(300)
+    check("receipt without a unit cost is caught", not DB["fin_goods_receipts"] and "unit cost" in page.inner_text("#toast"))
+    page.fill("#gr-cost", "40"); page.fill("#gr-ref", "DN-118"); page.click("#grSave"); page.wait_for_timeout(900)
+    g_ = DB["fin_goods_receipts"][0] if DB["fin_goods_receipts"] else {}
+    check("goods received: 10 m at 40 in stock, GRN-0001, 400 held as received-not-billed", g_.get("receipt_no") == "GRN-0001" and on_hand(WOOL)[0] == 10 and "GRN-0001" in page.inner_text("#view")
+          and "400" in page.inner_text(".tiles"), page.inner_text(".tiles"))
+    check("page tells you to code the bill to goods-received", "2050 goods received, not yet billed" in page.inner_text("#view").lower())
+    page.click('[data-act="prod-new"]'); page.wait_for_selector("#prodNewForm"); page.fill("#po-title", "Navy two-piece suit"); page.fill("#po-ref", "K-2210"); page.click("#poSave")
+    page.wait_for_selector("#prodIssueForm")
+    o_ = DB["fin_production_orders"][0]
+    check("order opens as JOB-0001 and shows its cost sheet", o_["order_no"] == "JOB-0001" and "job-0001" in page.inner_text(".sheet").lower())
+    page.select_option("#pi-item", WOOL); page.fill("#pi-qty", "3.5"); page.click("#piSave"); page.wait_for_timeout(900)
+    check("issuing 3.5 m puts 140 into the job and leaves 6.5 m", on_hand(WOOL)[0] == 6.5 and "140" in page.inner_text("#prodCosts"))
+    page.fill("#pc-note", "Stitching — Topaz tailoring"); page.fill("#pc-amt", "150"); page.select_option("#pc-acc", f"{FE1[:8]}-acc-1010"); page.click("#pcSave"); page.wait_for_timeout(900)
+    check("stitching added: job cost 290", "290" in page.inner_text(".sheet .tiles"), page.inner_text(".sheet .tiles"))
+    page.select_option("#pi-item", WOOL); page.fill("#pi-qty", "8"); page.click("#piSave"); page.wait_for_selector("#dlgIn")
+    check("using more than recorded stock asks the owner to authorise with a reason", "not enough recorded stock" in page.inner_text(".dlg").lower())
+    page.click('.dlg [data-r="1"]'); page.wait_for_timeout(200)
+    check("authorising needs a reason", page.is_visible("#dlgErr") and not DB["fin_stock_exceptions"])
+    page.fill("#dlgIn", "Fabric arrived, receipt not yet entered"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(900)
+    check("exception recorded with the 1.5 m shortfall", DB["fin_stock_exceptions"] and DB["fin_stock_exceptions"][0]["qty_short"] == 1.5 and "authorised short stock" in page.inner_text("#prodCosts").lower())
+    xc = next(c for c in DB["fin_production_costs"] if c["exception_id"])
+    page.click(f'[data-act="prod-cost-reverse"][data-id="{xc["id"]}"]'); page.wait_for_selector("#dlgIn"); page.fill("#dlgIn", "Second suit cancelled"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(900)
+    check("reversing returns the fabric to stock", on_hand(WOOL)[0] == 6.5 and xc["status"] == "reversed")
+    page.click('[data-act="prod-complete"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(900)
+    check("completing moves 290 to cost of goods sold", o_["status"] == "completed" and o_["total_cost"] == 290 and page.locator("#prodIssueForm").count() == 0)
+    shot(page, "29-production-order", True)
+    page.keyboard.press("Escape"); page.goto(BASE + f"/#/finance/{FE1}/stock"); page.goto(BASE + f"/#/finance/{FE1}/production"); page.wait_for_selector('[data-act="prod-open"]')
+    check("orders list shows the completed job at 290", "completed" in page.inner_text("#view").lower() and "290" in page.inner_text('[data-act="prod-open"]'))
     ctx.close()
 
     # ---------- phone, light + dark ----------
