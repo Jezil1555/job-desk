@@ -45,3 +45,7 @@ create function public.reopen_task(p_task uuid, p_reason text, p_status text def
 begin perform set_config('app.reopen_reason', trim(p_reason), true); update public.tasks set status = p_status where id = p_task; end $$;
 create schema if not exists private;
 create table if not exists private.migration_snapshots (migration text not null, object text not null, definition text not null, saved_at timestamptz not null default now(), primary key (migration, object));
+create or replace function public.is_ws_member(ws uuid) returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.workspace_members where workspace_id = ws and user_id = (select auth.uid())) $$;
+create or replace function public.can_write_ws(ws uuid) returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.workspace_members where workspace_id = ws and user_id = (select auth.uid()) and role in ('owner','member')) $$;

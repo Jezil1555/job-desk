@@ -1,7 +1,7 @@
 // Forms for projects, milestones, follow-ups, workspaces (incl. people & roles) and contacts.
 import { esc, zonedDate, zonedTime, zonedToISO, fmtDate, fmtDateTime, todayISO, addDays, ago } from "../util.js";
 import { PRIORITIES, PRIORITY_LABEL, PROJECT_STATUS_LABEL } from "../logic.js";
-import { state, wsById, projectById, contactById, followUpById, membersOf, nameOf, shortName, canWrite, isWsOwner, activeWorkspaces } from "../store.js";
+import { emit, state, wsById, projectById, contactById, followUpById, membersOf, nameOf, shortName, canWrite, isWsOwner, activeWorkspaces } from "../store.js";
 import { sb, run, loadAll, refreshHealthSoon } from "../api.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, busy, avatar } from "../ui.js";
 import { openTask } from "./task.js";
@@ -51,6 +51,16 @@ async function submitProject() {
     next_action: val("pf-next") || null, description: val("pf-desc") || null };
   if (f.id) { row.manual_status = ms || null; row.manual_status_reason = ms ? mr : null; }
   else row.workspace_id = val("pf-ws");
+  const cur = f.id ? projectById(f.id) : null;
+  if (cur && cur.baselined_at && (start !== cur.start_date || target !== cur.target_date)) {
+    if (!start || !target) return toastError("A baselined project keeps its start and target dates; change them instead of clearing them.");
+    const reason = await dialog({ title: "Why is the schedule changing?", text: `This project has a baseline (target ${fmtDate(cur.baseline_target_date)}). The change is logged against it.`, input: { label: "Reason", required: true, min: 3, multiline: true }, confirm: "Change dates" });
+    if (!reason) return;
+    const rv = await run(sb.rpc("revise_project_dates", { p_project: f.id, p_start: start, p_target: target, p_reason: reason }));
+    if (rv.error) return toastError(rv.error);
+    if (state.ui.sched) delete state.ui.sched[f.id];
+  }
+  if (cur && cur.baselined_at) { delete row.start_date; delete row.target_date; }
   const btn = $("pfSave"); busy(btn, true);
   const r = f.id ? await run(sb.from("projects").update(row).eq("id", f.id).select().single()) : await run(sb.from("projects").insert(row).select().single());
   busy(btn, false);
@@ -87,6 +97,15 @@ async function submitMilestone() {
   if (actual && actual > todayISO(state.tz)) return toastError("The actual date can't be in the future.");
   const row = { title, planned_date: val("mf-planned") || null, actual_date: actual, weight: Number(val("mf-weight") || 1), is_critical: $("mf-critical").checked, notes: val("mf-notes") || null };
   if (!f.id) row.project_id = f.ctx.project_id;
+  const curM = f.id ? state.milestones.find(x => x.id === f.id) : null;
+  if (curM && curM.baseline_date && row.planned_date !== curM.planned_date) {
+    const reason = await dialog({ title: "Why is this milestone moving?", text: `Baseline date: ${fmtDate(curM.baseline_date)}. The change is logged against it.`, input: { label: "Reason", required: true, min: 3, multiline: true }, confirm: "Move milestone" });
+    if (!reason) return;
+    const rv = await run(sb.rpc("revise_milestone_date", { p_milestone: f.id, p_planned: row.planned_date, p_reason: reason }));
+    if (rv.error) return toastError(rv.error);
+    if (state.ui.sched) delete state.ui.sched[curM.project_id];
+  }
+  if (curM && curM.baseline_date) delete row.planned_date;
   const btn = $("mfSave"); busy(btn, true);
   const r = f.id ? await run(sb.from("milestones").update(row).eq("id", f.id).select().single()) : await run(sb.from("milestones").insert(row).select().single());
   busy(btn, false);
@@ -294,6 +313,19 @@ export async function handleFormSubmit(form) {
 export async function handleFormClick(act, el) {
   const id = el.dataset.id;
   switch (act) {
+    case "set-baseline": {
+      const p = projectById(id);
+      if (!p.target_date) return toastError("Set a target date in Project settings first."), true;
+      let reason = null;
+      if (p.baselined_at) { reason = await dialog({ title: "Re-baseline the schedule?", text: "Today's dates become the new baseline. The old baseline is kept in the revision log.", input: { label: "Reason", required: true, min: 3, multiline: true }, confirm: "Re-baseline" }); if (!reason) return true; }
+      else if (!(await dialog({ title: "Set the baseline?", text: `Freezes the current start (${p.start_date ? fmtDate(p.start_date) : "none"}), target (${fmtDate(p.target_date)}) and milestone dates as the original plan. Later changes will need a reason.`, confirm: "Set baseline" }))) return true;
+      const r = await run(sb.rpc("set_project_baseline", { p_project: id, p_reason: reason }));
+      if (r.error) return toastError(r.error), true;
+      const [pp, mm] = await Promise.all([sb.from("projects").select("*").eq("id", id).single(), sb.from("milestones").select("*").eq("project_id", id)]);
+      if (pp.data) Object.assign(p, pp.data);
+      for (const m of mm.data || []) { const x = state.milestones.find(y => y.id === m.id); if (x) Object.assign(x, m); }
+      if (state.ui.sched) delete state.ui.sched[id];
+      emit("data"); toast(reason ? "Re-baselined" : "Baseline set"); return true; }
     case "project-archive": { const p = projectById(id); const r = await run(sb.from("projects").update({ archived: !p.archived }).eq("id", id)); if (r.error) return toastError(r.error), true; p.archived = !p.archived; closeSheet(); toast(p.archived ? "Project archived" : "Project restored"); return true; }
     case "project-delete": {
       const p = projectById(id), n = state.tasks.filter(t => t.project_id === id).length;

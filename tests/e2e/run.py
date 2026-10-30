@@ -162,6 +162,25 @@ def handle(route):
         if fn.startswith("fin_"):
             try: return reply(fin_rpc(fn, body))
             except FinError as e: return err(str(e))
+        if fn == "set_project_baseline":
+            pj = next(x for x in DB["projects"] if x["id"] == body["p_project"])
+            if pj.get("baselined_at") and len((body.get("p_reason") or "").strip()) < 3: return err("reason_required: give a reason for re-baselining")
+            if pj.get("baselined_at"): DB.setdefault("schedule_revisions", []).append({"id": len(DB.get("schedule_revisions", [])) + 1, "workspace_id": pj["workspace_id"], "project_id": pj["id"], "milestone_id": None, "field": "baseline", "old_date": pj["baseline_target_date"], "new_date": pj["target_date"], "reason": "Re-baseline: " + body["p_reason"], "revised_by": ME, "revised_at": iso(now)})
+            pj.update(baseline_start_date=pj.get("start_date"), baseline_target_date=pj.get("target_date"), baselined_at=iso(now), baselined_by=ME)
+            for m in DB["milestones"]:
+                if m["project_id"] == pj["id"]: m["baseline_date"] = m.get("planned_date")
+            return reply(None)
+        if fn == "revise_project_dates":
+            pj = next(x for x in DB["projects"] if x["id"] == body["p_project"])
+            for fld, key in (("start_date", "p_start"), ("target_date", "p_target")):
+                if body.get(key) and body[key] != pj.get(fld):
+                    DB.setdefault("schedule_revisions", []).append({"id": len(DB.get("schedule_revisions", [])) + 1, "workspace_id": pj["workspace_id"], "project_id": pj["id"], "milestone_id": None, "field": fld, "old_date": pj.get(fld), "new_date": body[key], "reason": body["p_reason"], "revised_by": ME, "revised_at": iso(now)})
+                    pj[fld] = body[key]
+            return reply(None)
+        if fn == "revise_milestone_date":
+            m = next(x for x in DB["milestones"] if x["id"] == body["p_milestone"])
+            DB.setdefault("schedule_revisions", []).append({"id": len(DB.get("schedule_revisions", [])) + 1, "workspace_id": WS[1], "project_id": m["project_id"], "milestone_id": m["id"], "field": "planned_date", "old_date": m.get("planned_date"), "new_date": body["p_planned"], "reason": body["p_reason"], "revised_by": ME, "revised_at": iso(now)})
+            m["planned_date"] = body["p_planned"]; return reply(None)
         if fn == "request_task_review":
             t = next(t for t in DB["tasks"] if t["id"] == body["p_task"])
             if not t.get("reviewer_id"): return err("no_reviewer: choose a reviewer first")
@@ -230,6 +249,8 @@ def handle(route):
         for r in rows:
             if match(r):
                 new = {**r, **body}
+                if table == "projects" and r.get("baselined_at") and (new.get("target_date") != r.get("target_date") or new.get("start_date") != r.get("start_date")):
+                    return err("reason_required: the schedule is baselined — give a reason for changing the date")
                 if table == "follow_ups" and new.get("status") == "closed" and r.get("status") != "closed" and not new.get("outcome"):
                     return err("outcome_required: record the outcome before closing")
                 if table == "tasks":
@@ -546,9 +567,10 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles")
     check("Command Centre shows habits for today", "habits today" in page.inner_text("#view").lower())
     page.goto(BASE + "/#/goals/goals"); page.click('.page-head [data-act="goal-new"]'); page.wait_for_selector("#goalForm")
-    page.fill("#gl-title", "Lose 8 kg"); page.fill("#gl-target", "8"); page.fill("#gl-current", "2"); page.fill("#gl-unit", "kg"); page.click("#glSave"); page.wait_for_timeout(500)
+    page.fill("#gl-title", "Lose 8 kg"); page.fill("#gl-target", "8"); page.fill("#gl-current", "2"); page.fill("#gl-unit", "kg"); page.click("#glSave"); page.wait_for_function("document.querySelector('#toast') && document.querySelector('#toast').innerText.includes('Goal saved')")
     page.keyboard.press("Escape"); page.wait_for_selector(".goal-card")
-    check("goal progress computed from target and current (25%)", "25%" in page.inner_text(".goal-card"))
+    gc = page.locator(".goal-card", has_text="Lose 8 kg").first.inner_text()
+    check("goal progress computed from target and current (25%)", "25%" in gc, gc[:120])
     page.goto(BASE + "/#/goals/health"); page.click('.page-head [data-act="health-new"]'); page.wait_for_selector("#healthForm")
     page.fill("#hl-value", "82.4"); page.click("#hlSave"); page.wait_for_timeout(400)
     check("health entry saved", len(DB["health_logs"]) == 1 and DB["health_logs"][0]["kind"] == "weight")
@@ -861,6 +883,27 @@ with sync_playwright() as pw:
     page.select_option("#fu-outcome", "renegotiated"); page.fill("#fu-outcome-note", "New date agreed: 12 Nov"); page.click('[data-act="fu-close-confirm"]'); page.wait_for_timeout(500)
     check("closed with the recorded outcome", f1["status"] == "closed" and f1.get("outcome") == "renegotiated" and "Renegotiated" in page.inner_text("#sheet"))
     shot(page, "26-commitment-outcome")
+    ctx.close()
+
+
+    # ---------- Increment 3: schedule baselines ----------
+    ctx, page = new_page(b, 1366, 900)
+    pj = next(x for x in DB["projects"] if x["id"] == P1)
+    if not pj.get("target_date"): pj["target_date"] = "2026-12-15"
+    page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector('[data-act="set-baseline"]')
+    page.click('[data-act="set-baseline"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(600)
+    base_target = pj.get("baseline_target_date")
+    check("baseline freezes the current target", pj.get("baselined_at") and base_target == pj["target_date"], str(base_target))
+    page.click(f'[data-act="edit-project"][data-id="{P1}"]'); page.wait_for_selector("#pf-target")
+    new_target = (dt.date.fromisoformat(pj["target_date"]) + dt.timedelta(days=14)).isoformat()
+    page.fill("#pf-target", new_target); page.click("#pfSave"); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]')
+    check("changing a baselined date asks for a reason", page.is_visible("#dlgErr"))
+    page.fill("#dlgIn", "Supplier delay on racks"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(800)
+    revs = [r_ for r_ in DB.get("schedule_revisions", []) if r_["project_id"] == P1]
+    check("new target saved, baseline kept, revision logged with reason", pj["target_date"] == new_target and pj["baseline_target_date"] == base_target and revs and revs[-1]["reason"] == "Supplier delay on racks")
+    page.goto(BASE + "/#/home"); page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector(".proj-hero"); page.wait_for_timeout(500)
+    check("project page shows the 14-day slip against the baseline", "slipped 14d" in page.inner_text("#view"), page.inner_text(".proj-hero"))
+    shot(page, "27-project-baseline", True)
     ctx.close()
 
     # ---------- phone, light + dark ----------

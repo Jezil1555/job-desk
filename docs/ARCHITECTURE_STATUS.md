@@ -38,9 +38,11 @@ Tests prove the trial balance balances and invoice/payment flows don't double-co
 - Gap: fabric receipt separate from purchase (goods-received), **consumption into work in progress**, **finished-order costing**, and an
   authorised negative-stock exception with a recorded reason.
 
-## 7. Project progress — Partial
-- Met: milestone weights, planned vs actual dates, progress from weighted milestones and tasks.
-- Gap: **baseline dates and revision history** — today a target date or milestone date can be edited in place (logged in `activity`, but there is no baseline to compare against).
+## 7. Project progress — Met (increment 3, 30 Oct)
+Milestone weights; planned and actual dates stored separately; **baselines** (project start/target and each milestone) frozen by "Set baseline".
+Once baselined, any date change needs a reason and is logged in `schedule_revisions` (old → new, who, when, why); baselines can't be edited directly,
+only re-baselined with a reason (old baseline kept in the log). `schedule_variance` view gives slip days per project and milestone.
+Tests: 18 live DB checks (rolled back), rollback verified locally, 4 browser checks.
 
 ## 8. Notifications — Partial
 - Met: server-side scheduled jobs (pg_cron), idempotency via `*_reminded_for` markers, user time zones, escalation dates on follow-ups, in-app history, phone push.
@@ -65,7 +67,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 ## Proposed increments (one at a time, each fully tested before deploy)
 1. ~~Task accountability~~ — done.
 2. ~~Commitments~~ — done.
-3. **Project baselines** — baseline dates on projects and milestones, revision log with reason, slip report.
+3. ~~Project baselines~~ — done.
 4. **AI proposal log** — every AI suggestion recorded with accept / edit / reject.
 5. **Notification reliability** — delivery log, retry with backoff, snooze.
 6. **Inter-entity transactions** — due-to / due-from between any two books, matching check.

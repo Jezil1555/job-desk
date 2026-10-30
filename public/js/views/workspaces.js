@@ -113,7 +113,8 @@ export function renderProject(view, id) {
     <div class="ph-col"><span class="k">Status</span><div>${projectPill(h.effective_status || "on_track")}</div>${p.manual_status ? `<span class="calc-note">Manual: “${esc(p.manual_status_reason || "")}” · calculated ${PROJECT_STATUS_LABEL[h.calculated_status] || ""}</span>` : h.reasons && h.reasons.length ? `<span class="calc-note">${esc(h.reasons.join(" · "))}</span>` : ""}</div>
     <div class="ph-col"><span class="k">Progress</span><div class="ph-bar big"><div class="bar"><i style="width:${pct || 0}%"></i></div><b class="num">${pct === null ? "—" : pct + "%"}</b></div><span class="calc-note">${h.progress_basis === "milestones" ? "weighted by completed milestones" : h.progress_basis === "tasks" ? "share of completed top-level tasks" : "add milestones or tasks to measure progress"}</span></div>
     <div class="ph-col"><span class="k">Next milestone</span><div>${h.next_milestone_title ? `${esc(h.next_milestone_title)}${h.next_milestone_date ? ` <span class="num">· ${fmtDate(h.next_milestone_date)}</span>` : ""}` : "—"}</div></div>
-    <div class="ph-col"><span class="k">Owner · dates</span><div>${esc(nameOf(p.owner_id))}</div><span class="calc-note">${p.start_date ? fmtDate(p.start_date) : "no start"} → ${p.target_date ? fmtDate(p.target_date) : "no target"}${p.budget ? ` · budget ${esc(p.budget_currency || "")} ${Number(p.budget).toLocaleString("en-US")}` : ""}</span></div>
+    <div class="ph-col"><span class="k">Owner · dates</span><div>${esc(nameOf(p.owner_id))}</div><span class="calc-note">${p.start_date ? fmtDate(p.start_date) : "no start"} → ${p.target_date ? fmtDate(p.target_date) : "no target"}${p.budget ? ` · budget ${esc(p.budget_currency || "")} ${Number(p.budget).toLocaleString("en-US")}` : ""}</span>
+      ${p.baselined_at ? `<span class="calc-note">Baseline ${p.baseline_target_date ? fmtDate(p.baseline_target_date) : "—"}${slipText(p.baseline_target_date, p.target_date)}</span>` : ""}</div>
   </section>
   ${p.next_action ? `<div class="banner info"><b>Next required action:</b> ${esc(p.next_action)}</div>` : ""}
   ${risks.length || depFails.length ? section("Risks & blockers", `<div class="list">${[...new Set([...risks, ...depFails])].map(t => taskRow(t, { showWs: false })).join("")}</div>`, { count: risks.length + depFails.length, cls: "risk" }) : ""}
@@ -123,10 +124,37 @@ export function renderProject(view, id) {
     ${section("Follow-ups", `${fus.length ? `<div class="list compact">${fus.map(fuLine).join("")}</div>` : `<p class="calm">No open follow-ups linked to this project.</p>`}
       ${writable ? `<button class="btn sm" data-act="new-followup" data-ws="${w.id}" data-project="${id}">${ICON.plus}New follow-up</button>` : ""}`, { count: fus.length })}
   </div>
+  ${scheduleSection(p, ms, writable)}
   ${section("Open tasks", `${open.length ? `<div class="list">${open.map(t => taskRow(t, { showWs: false })).join("")}</div>` : `<p class="calm">No open tasks.</p>`}
     ${writable ? `<button class="btn sm" data-act="capture" data-ws="${w.id}" data-project="${id}">${ICON.plus}Add task</button>` : ""}`, { count: open.length })}
   ${linkedPanel("project", id, p.workspace_id)}
   ${done.length ? section("Completed", `<div class="list">${done.slice(0, 15).map(t => taskRow(t, { showWs: false })).join("")}</div>`, { count: done.length }) : ""}`;
+}
+
+const dayDiff = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+function slipText(base, cur) {
+  if (!base || !cur) return "";
+  const d = dayDiff(base, cur);
+  return d > 0 ? ` · <span class="bad-text">slipped ${d}d</span>` : d < 0 ? ` · <span class="ok-text">${-d}d ahead</span>` : " · on baseline";
+}
+const FIELD_NAME = { start_date: "Start", target_date: "Target", planned_date: "Milestone", baseline: "Re-baseline" };
+function scheduleSection(p, ms, writable) {
+  const cache = (state.ui.sched = state.ui.sched || {});
+  if (p.baselined_at && cache[p.id] === undefined) {
+    cache[p.id] = null;
+    sb.from("schedule_revisions").select("*").eq("project_id", p.id).order("revised_at", { ascending: false }).limit(100).then(({ data }) => { cache[p.id] = data || []; emit("data"); });
+  }
+  const revs = cache[p.id] || [];
+  const msName = id => (ms.find(m => m.id === id) || {}).title || "milestone";
+  if (!p.baselined_at) return section("Schedule baseline", `<p class="calm">No baseline yet. Setting one freezes today's start, target and milestone dates as the original plan, so later changes are measured against it and each change needs a reason.</p>
+    ${writable ? `<button class="btn sm" data-act="set-baseline" data-id="${p.id}">Set baseline</button>` : ""}`);
+  const slipped = ms.filter(m => m.baseline_date && (m.actual_date || m.planned_date) && dayDiff(m.baseline_date, m.actual_date || m.planned_date) > 0);
+  return section("Schedule baseline", `<p class="calm">Baselined ${fmtDate(p.baselined_at.slice(0, 10))} by ${esc(nameOf(p.baselined_by))}. Target: baseline ${p.baseline_target_date ? fmtDate(p.baseline_target_date) : "—"} → now ${p.target_date ? fmtDate(p.target_date) : "—"}${slipText(p.baseline_target_date, p.target_date)}.
+    ${slipped.length ? ` ${slipped.length} milestone${slipped.length > 1 ? "s" : ""} behind baseline.` : ""}</p>
+    ${revs.length ? `<div class="tablewrap"><table class="rtable"><thead><tr><th>When</th><th>What</th><th>From → to</th><th>Reason</th><th>By</th></tr></thead><tbody>
+      ${revs.map(r => `<tr><td>${fmtDate(r.revised_at.slice(0, 10))}</td><td>${FIELD_NAME[r.field]}${r.milestone_id ? ": " + esc(msName(r.milestone_id)) : ""}</td><td class="num">${r.old_date ? fmtDate(r.old_date) : "—"} → ${r.new_date ? fmtDate(r.new_date) : "—"}${r.field !== "baseline" ? slipText(r.old_date, r.new_date) : ""}</td><td>${esc(r.reason)}</td><td>${esc(nameOf(r.revised_by))}</td></tr>`).join("")}</tbody></table></div>`
+      : cache[p.id] === null ? `<p class="hint">Loading revisions…</p>` : `<p class="hint">No date changes since the baseline.</p>`}
+    ${writable ? `<button class="btn sm" data-act="set-baseline" data-id="${p.id}">Re-baseline…</button>` : ""}`, { count: revs.length });
 }
 
 function msRow(m, writable) {
@@ -134,5 +162,5 @@ function msRow(m, writable) {
   return `<li class="ms ${m.actual_date ? "done" : late ? "late" : ""}" ${writable ? `data-act="edit-milestone" data-id="${m.id}" role="button" tabindex="0"` : ""}>
     <span class="ms-dot">${m.actual_date ? ICON.check : ICON.milestone}</span>
     <div class="tmain"><div class="ttitle">${esc(m.title)}${m.is_critical ? ` <span class="pill s-blocked">Critical</span>` : ""}</div>
-      <div class="tmeta"><span>Planned ${m.planned_date ? fmtDate(m.planned_date) : "—"}</span><span>Actual ${m.actual_date ? fmtDate(m.actual_date) : "—"}</span>${v !== null ? `<span class="${v > 0 ? "bad-text" : "ok-text"}">${m.actual_date ? (v > 0 ? `${v}d late` : v < 0 ? `${-v}d early` : "on time") : `${v}d overdue`}</span>` : ""}${Number(m.weight) !== 1 ? `<span>weight ${m.weight}</span>` : ""}</div></div></li>`;
+      <div class="tmeta"><span>Planned ${m.planned_date ? fmtDate(m.planned_date) : "—"}</span><span>Actual ${m.actual_date ? fmtDate(m.actual_date) : "—"}</span>${m.baseline_date && m.baseline_date !== m.planned_date ? `<span>Baseline ${fmtDate(m.baseline_date)}</span>` : ""}${v !== null ? `<span class="${v > 0 ? "bad-text" : "ok-text"}">${m.actual_date ? (v > 0 ? `${v}d late` : v < 0 ? `${-v}d early` : "on time") : `${v}d overdue`}</span>` : ""}${Number(m.weight) !== 1 ? `<span>weight ${m.weight}</span>` : ""}</div></div></li>`;
 }

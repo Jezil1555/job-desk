@@ -143,7 +143,7 @@ export function dialog({ title, text = "", input = null, confirm = "OK", danger 
       <p class="dlg-err" id="dlgErr" hidden></p>
       <div class="dlg-btns"><button class="btn" data-r="0">${esc(cancel)}</button><button class="btn ${danger ? "danger-fill" : "primary"}" data-r="1">${esc(confirm)}</button></div></div>`;
     d.hidden = false;
-    const inp = $("dlgIn"); if (inp) setTimeout(() => inp.focus(), 30); else setTimeout(() => d.querySelector('[data-r="1"]').focus(), 30);
+    const inp = $("dlgIn"); if (inp) setTimeout(() => inp.isConnected && inp.focus(), 30); else setTimeout(() => { const b = d.querySelector('[data-r="1"]'); if (b) b.focus(); }, 30);
     const done = v => { d.hidden = true; d.innerHTML = ""; document.removeEventListener("keydown", key); resolve(v); };
     const key = e => { if (e.key === "Escape") done(null); if (e.key === "Enter" && (!inp || inp.tagName === "INPUT")) d.querySelector('[data-r="1"]').click(); };
     document.addEventListener("keydown", key);
