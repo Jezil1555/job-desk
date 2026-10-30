@@ -85,6 +85,11 @@ insert into r(name, ok) select 'reimbursement credits the business bank and debi
 insert into r(name, ok) select 'reimbursement is not an expense or income in either book', not exists (select 1 from public.fin_lines l join public.fin_accounts a on a.id = l.account_id
   where l.journal_id in (select journal_id from public.fin_partner_txns where id = pg_temp.id('t4') union select mirror_journal_id from public.fin_partner_txns where id = pg_temp.id('t4')) and a.type in ('expense','income'));
 
+-- settles link
+select pg_temp.expect_error('funding cannot settle another line', format('select public.fin_partner_update(%L, %L, $q$x$q$)', pg_temp.id('t2'), jsonb_build_object('settles_txn_id', pg_temp.id('t3'))), 'bad_settles');
+select public.fin_partner_update(pg_temp.id('t4'), jsonb_build_object('settles_txn_id', pg_temp.id('t3')), 'Reimbursement was for September salary');
+insert into r(name, ok) select 'reimbursement linked to the salary line it settles, balances unchanged', settles_txn_id = pg_temp.id('t3') and pg_temp.biz_owed() = 5754 from public.fin_partner_txns where id = pg_temp.id('t4');
+
 -- editing and audit
 select pg_temp.expect_error('editing without a reason is refused', format('select public.fin_partner_update(%L, $q${"notes":"x"}$q$, $q$$q$)', pg_temp.id('t2')), 'reason_required');
 select pg_temp.expect_error('amount cannot be edited', format('select public.fin_partner_update(%L, $q${"amount":1}$q$, $q$typo$q$)', pg_temp.id('t2')), 'locked_field');
