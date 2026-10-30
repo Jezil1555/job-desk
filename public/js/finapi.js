@@ -2,7 +2,7 @@
 // All money-moving actions go through database functions that enforce double-entry rules.
 import { state, emit } from "./store.js";
 import { sb, run } from "./api.js";
-import { postedLines } from "./finance.js";
+import { postedLines, baseTotals } from "./finance.js";
 
 export const fin = {
   loaded: false, loading: null, error: null,
@@ -11,6 +11,7 @@ export const fin = {
   plinks: [], ptxns: [], pdocs: [], // partner accounts
   ictxns: [], // inter-entity transactions
   prodOrders: [], prodCosts: [], receipts: [], stockExceptions: [], // production costing
+  fxRevals: [], totalsBase: new Map(), // foreign currency
   posted: [] // posted lines with entry_date, recomputed after each load
 };
 const PAGE = 1000;
@@ -27,7 +28,7 @@ export function loadFin(force = false) {
   if (fin.loading && !force) return fin.loading;
   fin.loading = (async () => {
     try {
-      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions] = await Promise.all([
+      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals] = await Promise.all([
         all(() => sb.from("fin_entities").select("*").order("created_at")),
         all(() => sb.from("fin_members").select("entity_id, user_id, role")),
         all(() => sb.from("fin_accounts").select("*").order("code")),
@@ -51,11 +52,13 @@ export function loadFin(force = false) {
         all(() => sb.from("fin_production_orders").select("*").order("created_at", { ascending: false })),
         all(() => sb.from("fin_production_costs").select("*").order("cost_date").order("created_at")),
         all(() => sb.from("fin_goods_receipts").select("*").order("receipt_date", { ascending: false })),
-        all(() => sb.from("fin_stock_exceptions").select("*").order("authorised_at", { ascending: false }))
+        all(() => sb.from("fin_stock_exceptions").select("*").order("authorised_at", { ascending: false })),
+        all(() => sb.from("fin_fx_revaluations").select("*").order("rev_date", { ascending: false }))
       ]);
-      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions,
+      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals,
         totals: new Map(totals.map(t => [t.invoice_id, t])), loaded: true, error: null });
       fin.posted = postedLines(lines, journals);
+      fin.totalsBase = baseTotals(invoices, fin.totals);
     } catch (e) { fin.error = e; console.error(e); }
     fin.loading = null;
     emit("fin");
@@ -100,6 +103,8 @@ export const postInvoice = id => rpc("fin_post_invoice", { p_invoice: id });
 export const voidInvoice = (id, reason, date) => rpc("fin_void_invoice", { p_invoice: id, p_reason: reason, p_date: date || null });
 export const recordPayment = a => rpc("fin_record_payment", { p_entity: a.entity_id, p_direction: a.direction, p_party: a.party_id || null, p_date: a.pay_date, p_amount: a.amount,
   p_account: a.account_id, p_reference: a.reference || null, p_memo: a.memo || null, p_allocations: a.allocations || [] });
+export const recordFxPayment = a => rpc("fin_record_fx_payment", { p: { entity_id: a.entity_id, direction: a.direction, party_id: a.party_id || null, pay_date: a.pay_date, currency: a.currency,
+  amount: a.amount, base_amount: a.base_amount, account_id: a.account_id, reference: a.reference || null, memo: a.memo || null, allocations: a.allocations || [] } });
 export const voidPayment = (id, reason) => rpc("fin_void_payment", { p_payment: id, p_reason: reason });
 export const matchStatement = (st, line) => rpc("fin_match_statement", { p_statement: st, p_line: line });
 export const unmatchStatement = st => rpc("fin_unmatch_statement", { p_statement: st });
@@ -130,7 +135,7 @@ export async function deleteDraftJournal(id) { return run(sb.from("fin_journals"
 
 export async function saveInvoice(inv, lines) {
   let id = inv.id;
-  const head = { party_id: inv.party_id || null, party_reference: inv.party_reference || null, issue_date: inv.issue_date, due_date: inv.due_date || null, notes: inv.notes || null, task_id: inv.task_id || null };
+  const head = { currency: inv.currency || null, fx_rate: inv.currency ? (Number(inv.fx_rate) || null) : null, party_id: inv.party_id || null, party_reference: inv.party_reference || null, issue_date: inv.issue_date, due_date: inv.due_date || null, notes: inv.notes || null, task_id: inv.task_id || null };
   if (id) { const u = await run(sb.from("fin_invoices").update(head).eq("id", id)); if (u.error) return u;
     const d = await run(sb.from("fin_invoice_lines").delete().eq("invoice_id", id)); if (d.error) return d; }
   else { const r = await run(sb.from("fin_invoices").insert({ ...head, entity_id: inv.entity_id, kind: inv.kind }).select().single()); if (r.error) return r; id = r.data.id; }

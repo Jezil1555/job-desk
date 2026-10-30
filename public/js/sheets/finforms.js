@@ -7,7 +7,7 @@ import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastE
 import { safeFileName, fmtBytes, toCSV } from "../insights.js";
 import { money, r2, entryTotals, ACCOUNT_TYPES, SUBTYPE_LABEL, invoiceStatus, INVOICE_STATUS_LABEL, parseStatementCSV, profitAndLoss, balanceSheet, cashFlow, trialBalance, aging, ledger, monthStart, monthEnd, monthsBetween, natural } from "../finance.js";
 import { fin, loadFin, loadAudit, entityById, accById, partyById, journalById, invoiceById, paymentById, itemById, canWriteFin, isFinOwner, accountsOf, moneyAccounts, sysAccount,
-  linesOf, linesOfJournal, invLinesOf, filesOf, stockOf, postJournal, reverseJournal, postInvoice, voidInvoice, recordPayment, voidPayment, matchStatement, unmatchStatement,
+  linesOf, linesOfJournal, invLinesOf, filesOf, stockOf, postJournal, reverseJournal, postInvoice, voidInvoice, recordPayment, recordFxPayment, voidPayment, matchStatement, unmatchStatement,
   addFinMember, stockAdjust, saveJournal, deleteDraftJournal, saveInvoice, uploadFinFile, finFileUrl, deleteFinFile } from "../finapi.js";
 import { ui, rates, periodRange, REPORTS, auditHtml, bankingAccount } from "../views/finance.js";
 
@@ -16,6 +16,7 @@ const val = id => ($(id) ? $(id).value.trim() : "");
 const num = id => { const v = val(id); return v === "" ? null : Number(v); };
 const CURRENCIES = ["QAR", "INR", "BHD", "AED", "SAR", "KWD", "OMR", "USD", "EUR", "GBP"];
 const curEntity = () => entityById(state.route.a);
+const ccyOptions = (base, sel, extra = []) => [...new Set([base, ...extra, ...CURRENCIES])].map(c => `<option value="${c}" ${c === (sel || base) ? "selected" : ""}>${c}${c === base ? " (books)" : ""}</option>`).join("");
 const accOptions = (eid, sel, pred = () => true, blank = "Choose account…") => `<option value="">${blank}</option>` + Object.entries(ACCOUNT_TYPES).map(([t, l]) => {
   const as = accountsOf(eid, a => a.type === t && (a.is_active || a.id === sel) && pred(a)); return as.length ? `<optgroup label="${l}">${as.map(a => `<option value="${a.id}" ${a.id === sel ? "selected" : ""}>${esc(a.code + " " + a.name)}</option>`).join("")}</optgroup>` : ""; }).join("");
 const partyOptions = (eid, sel, kinds) => `<option value="">—</option>` + fin.parties.filter(p => p.entity_id === eid && (!p.archived || p.id === sel) && (!kinds || kinds.includes(p.kind) || p.id === sel)).map(p => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
@@ -190,7 +191,7 @@ function openInvoice(id, kind) {
   const inv = id ? invoiceById(id) : null;
   if (id && !inv) return toastError("That invoice isn't available.");
   const e = inv ? entityById(inv.entity_id) : curEntity(); if (!e) return;
-  idraft = inv && inv.status === "draft" ? { ...inv, lines: invLinesOf(inv.id).map(l => ({ ...l })) } : !inv ? { entity_id: e.id, kind, issue_date: today(), due_date: "", party_id: "", party_reference: "", notes: "", task_id: "", lines: [{ qty: 1 }] } : null;
+  idraft = inv && inv.status === "draft" ? { ...inv, lines: invLinesOf(inv.id).map(l => ({ ...l })) } : !inv ? { entity_id: e.id, kind, issue_date: today(), due_date: "", party_id: "", party_reference: "", notes: "", task_id: "", currency: "", fx_rate: "", lines: [{ qty: 1 }] } : null;
   openSheet(sh => renderInvoice(sh, id), { wide: true });
 }
 function taskOptions(e, sel) {
@@ -203,16 +204,17 @@ function renderInvoice(sh, id) {
   if (inv && inv.status !== "draft") {
     const t = fin.totals.get(inv.id) || { total: 0, paid: 0 }, s = invoiceStatus(inv, t, today()), out = r2(Number(t.total) - Number(t.paid));
     const allocs = fin.allocations.filter(a => a.invoice_id === inv.id).map(a => ({ a, p: paymentById(a.payment_id) })).filter(x => x.p);
-    const task = inv.task_id && state.taskById.get(inv.task_id);
+    const task = inv.task_id && state.taskById.get(inv.task_id), cc = inv.currency || e.base_currency;
     sh.innerHTML = sheetHead(`${noun} ${inv.number}`, `${esc(e.name)} · ${esc((partyById(inv.party_id) || {}).name || "")}`) + `<div class="sh-body">
-      <div class="inv-head"><span class="pill inv-${s}">${INVOICE_STATUS_LABEL[s]}</span><div><small class="hint">Total</small><b class="num big">${money(t.total, e.base_currency)}</b></div>
-        <div><small class="hint">Paid</small><b class="num">${money(t.paid, e.base_currency)}</b></div><div><small class="hint">Outstanding</small><b class="num ${out > 0 && s === "overdue" ? "bad-text" : ""}">${money(Math.max(out, 0), e.base_currency)}</b></div></div>
+      <div class="inv-head"><span class="pill inv-${s}">${INVOICE_STATUS_LABEL[s]}</span><div><small class="hint">Total</small><b class="num big">${money(t.total, cc)}</b></div>
+        <div><small class="hint">Paid</small><b class="num">${money(t.paid, cc)}</b></div><div><small class="hint">Outstanding</small><b class="num ${out > 0 && s === "overdue" ? "bad-text" : ""}">${money(Math.max(out, 0), cc)}</b></div></div>
       ${inv.status === "void" ? `<div class="banner warn">Void: ${esc(inv.void_reason || "")}</div>` : ""}
-      <dl class="kv"><dt>Issued</dt><dd>${fmtDate(inv.issue_date)}</dd>${inv.party_reference ? `<dt>${kind === "sale" ? "Customer ref" : "Supplier's number"}</dt><dd>${esc(inv.party_reference)}</dd>` : ""}<dt>Journal</dt><dd><button class="linkbtn" data-act="fin-open-journal" data-id="${inv.journal_id}">#${(journalById(inv.journal_id) || {}).number || ""}</button></dd></dl>
+      <dl class="kv"><dt>Issued</dt><dd>${fmtDate(inv.issue_date)}</dd>${inv.party_reference ? `<dt>${kind === "sale" ? "Customer ref" : "Supplier's number"}</dt><dd>${esc(inv.party_reference)}</dd>` : ""}<dt>Journal</dt><dd><button class="linkbtn" data-act="fin-open-journal" data-id="${inv.journal_id}">#${(journalById(inv.journal_id) || {}).number || ""}</button></dd>
+        ${inv.currency ? `<dt>Exchange rate</dt><dd>1 ${inv.currency} = ${Number(inv.fx_rate)} ${e.base_currency} · booked at ${money(r2(Number(t.total) * Number(inv.fx_rate)), e.base_currency)}</dd>` : ""}</dl>
       <table class="rtable"><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead><tbody>
         ${invLinesOf(inv.id).map(l => `<tr><td>${esc(l.description)}${l.item_id ? ` <small class="hint">${esc((itemById(l.item_id) || {}).sku || "stock")}</small>` : ""}</td><td class="num">${Number(l.qty)}</td><td class="num">${money(l.unit_price)}</td><td class="num">${money(l.amount)}</td></tr>`).join("")}
         <tr class="total"><td colspan="3">Total</td><td class="num">${money(t.total)}</td></tr></tbody></table>
-      ${allocs.length ? `<h3>Payments</h3><ul class="plain">${allocs.map(x => `<li><button class="linkbtn" data-act="fin-open-payment" data-id="${x.p.id}">${fmtDate(x.p.pay_date)} · ${money(x.a.amount, e.base_currency)}${x.p.reference ? " · " + esc(x.p.reference) : ""}</button>${x.p.status === "void" ? ` <span class="pill inv-void">void</span>` : ""}</li>`).join("")}</ul>` : ""}
+      ${allocs.length ? `<h3>Payments</h3><ul class="plain">${allocs.map(x => `<li><button class="linkbtn" data-act="fin-open-payment" data-id="${x.p.id}">${fmtDate(x.p.pay_date)} · ${money(x.a.amount, cc)}${x.p.reference ? " · " + esc(x.p.reference) : ""}</button>${x.p.status === "void" ? ` <span class="pill inv-void">void</span>` : ""}</li>`).join("")}</ul>` : ""}
       <form id="finInvMeta" class="review-form" data-id="${inv.id}">
         <div class="grid2"><label class="field"><span>Due date <small>(optional)</small></span><input class="input" type="date" id="im-due" value="${inv.due_date || ""}" min="${inv.issue_date}" ${w ? "" : "disabled"}></label>
         <label class="field"><span>Linked task</span><select class="input" id="im-task" ${w ? "" : "disabled"}>${taskOptions(e, inv.task_id)}</select></label></div>
@@ -233,6 +235,9 @@ function renderInvoice(sh, id) {
       <button type="button" class="linkbtn" data-act="fin-party" data-quick="1">+ add new</button></label>
     <label class="field"><span>Date</span><input class="input" type="date" id="fi-date" value="${d.issue_date}"></label>
     <label class="field"><span>Due date <small>(optional)</small></span><input class="input" type="date" id="fi-due" value="${d.due_date || ""}"></label></div>
+    <div class="grid2"><label class="field"><span>Currency</span><select class="input" id="fi-ccy">${ccyOptions(e.base_currency, d.currency)}</select></label>
+      ${d.currency ? `<label class="field"><span>Rate: 1 ${d.currency} = ? ${e.base_currency}</span><input class="input num" type="number" step="0.00000001" min="0" id="fi-rate" value="${d.fx_rate || ""}" placeholder="from your bank or the invoice"></label>` : `<span></span>`}</div>
+    ${d.currency ? `<p class="hint">Prices below are in ${d.currency}. Posting records them in ${e.base_currency} at this rate; the difference when it's paid is posted as an exchange gain or loss. No rate is filled in for you.</p>` : ""}
     <div class="grid2"><label class="field"><span>${kind === "sale" ? "Customer reference / PO" : "Supplier's bill number"}</span><input class="input" id="fi-ref" value="${esc(d.party_reference || "")}"></label>
     <label class="field"><span>Linked task <small>(optional)</small></span><select class="input" id="fi-task">${taskOptions(e, d.task_id)}</select></label></div>
     <div class="tablewrap"><table class="rtable jlines"><thead><tr>${items.length ? "<th>Stock item</th>" : ""}<th>Description</th><th class="num">Qty</th><th class="num">Price</th><th>${kind === "sale" ? "Income account" : "Expense / asset account"}</th><th class="num">Amount</th><th></th></tr></thead><tbody>
@@ -242,7 +247,7 @@ function renderInvoice(sh, id) {
         <td><input class="input sm num" type="number" step="0.01" min="0" data-il="${i}" data-f="unit_price" value="${l.unit_price ?? ""}" style="width:7em"></td>
         <td>${l.item_id && kind === "purchase" ? `<small class="hint">Inventory</small>` : `<select class="input sm" data-il="${i}" data-f="account_id">${accOptions(e.id, l.account_id, a => kind === "sale" ? a.type === "income" : ["expense", "asset"].includes(a.type) && !["cash", "bank", "receivable"].includes(a.subtype), kind === "sale" ? "Default: Sales" : "Choose…")}</select>`}</td>
         <td class="num">${money(r2((Number(l.qty) || 0) * (Number(l.unit_price) || 0)))}</td><td><button type="button" class="iconbtn sm" data-act="fi-del" data-i="${i}" aria-label="Remove line">${ICON.close}</button></td></tr>`).join("")}
-      <tr class="total"><td colspan="${items.length ? 5 : 4}"><button type="button" class="btn sm" data-act="fi-add">${ICON.plus}Line</button></td><td class="num" id="fi-total">${money(total)}</td><td></td></tr></tbody></table></div>
+      <tr class="total"><td colspan="${items.length ? 5 : 4}"><button type="button" class="btn sm" data-act="fi-add">${ICON.plus}Line</button></td><td class="num" id="fi-total">${money(total, d.currency || e.base_currency)}</td><td></td></tr></tbody></table></div>
     <label class="field"><span>Notes</span><textarea class="input" id="fi-notes" rows="2">${esc(d.notes || "")}</textarea></label>
     ${w ? `<div class="sheet-foot"><button class="btn primary" type="submit" data-post="1">Save & post</button><button class="btn" type="submit" data-post="0">Save draft</button>${d.id ? `<button type="button" class="btn danger" data-act="fi-delete">${ICON.trash}Delete draft</button>` : ""}</div>` : ""}
   </form>`;
@@ -250,14 +255,16 @@ function renderInvoice(sh, id) {
 function invoiceTotalLive() {
   if (!idraft) return;
   document.querySelectorAll("#finInvoice tbody tr").forEach((tr, i) => { const l = idraft.lines[i]; const cell = tr.querySelector("td.num:not(:has(input))"); if (l && cell) cell.textContent = money(r2((Number(l.qty) || 0) * (Number(l.unit_price) || 0))); });
-  const total = r2(idraft.lines.reduce((s, l) => s + r2((Number(l.qty) || 0) * (Number(l.unit_price) || 0)), 0)); if ($("fi-total")) $("fi-total").textContent = money(total);
+  const total = r2(idraft.lines.reduce((s, l) => s + r2((Number(l.qty) || 0) * (Number(l.unit_price) || 0)), 0)); if ($("fi-total")) { const e = entityById(idraft.entity_id); $("fi-total").textContent = money(total, idraft.currency || e.base_currency); }
 }
-function syncInvoiceHead() { if (!idraft || !$("fi-date")) return; Object.assign(idraft, { party_id: val("fi-party"), issue_date: val("fi-date"), due_date: val("fi-due"), party_reference: val("fi-ref"), task_id: val("fi-task"), notes: val("fi-notes") }); }
+function syncInvoiceHead() { if (!idraft || !$("fi-date")) return; const base = entityById(idraft.entity_id).base_currency, cc = val("fi-ccy");
+  Object.assign(idraft, { currency: cc && cc !== base ? cc : "", fx_rate: $("fi-rate") ? val("fi-rate") : idraft.fx_rate, party_id: val("fi-party"), issue_date: val("fi-date"), due_date: val("fi-due"), party_reference: val("fi-ref"), task_id: val("fi-task"), notes: val("fi-notes") }); }
 async function submitInvoice(post, btn) {
   syncInvoiceHead();
   const d = idraft;
   if (post && !d.party_id) return toastError(d.kind === "sale" ? "Choose the customer." : "Choose the supplier.");
   if (d.due_date && d.due_date < d.issue_date) return toastError("The due date is before the invoice date.");
+  if (post && d.currency && !(Number(d.fx_rate) > 0)) return toastError(`Enter the exchange rate: how many ${entityById(d.entity_id).base_currency} 1 ${d.currency} is worth.`);
   if (!d.lines.some(l => l.description && Number(l.qty) > 0)) return toastError("Add at least one line with a description.");
   if (d.kind === "purchase" && d.lines.some(l => l.description && !l.item_id && !l.account_id)) return toastError("Choose an account for each line.");
   busy(btn, true);
@@ -273,34 +280,39 @@ let pd = null;
 function openPayment(dir, invoiceId) {
   const inv = invoiceId && invoiceById(invoiceId), e = inv ? entityById(inv.entity_id) : curEntity(); if (!e) return;
   const m = moneyAccounts(e.id);
-  pd = { entity_id: e.id, direction: dir, party_id: inv ? inv.party_id : "", pay_date: today(), account_id: (m.find(a => a.subtype === "bank") || m[0] || {}).id, amount: "", reference: "", memo: "", alloc: {} };
+  pd = { entity_id: e.id, direction: dir, party_id: inv ? inv.party_id : "", currency: inv && inv.currency ? inv.currency : "", base_amount: "", pay_date: today(), account_id: (m.find(a => a.subtype === "bank") || m[0] || {}).id, amount: "", reference: "", memo: "", alloc: {} };
   if (inv) { const t = fin.totals.get(inv.id); pd.amount = r2(Number(t.total) - Number(t.paid)); pd.alloc[inv.id] = pd.amount; }
   openSheet(renderPayment);
 }
-function openInvoicesFor(eid, dir, party) {
+function openInvoicesFor(eid, dir, party, currency = "") {
   const kind = dir === "in" ? "sale" : "purchase";
-  return fin.invoices.filter(i => i.entity_id === eid && i.kind === kind && i.status === "posted" && i.party_id === party).map(i => ({ i, out: r2(Number((fin.totals.get(i.id) || {}).total) - Number((fin.totals.get(i.id) || {}).paid)) }))
+  return fin.invoices.filter(i => i.entity_id === eid && i.kind === kind && i.status === "posted" && i.party_id === party && (i.currency || "") === currency).map(i => ({ i, out: r2(Number((fin.totals.get(i.id) || {}).total) - Number((fin.totals.get(i.id) || {}).paid)) }))
     .filter(x => x.out > 0).sort((a, b) => (a.i.due_date || a.i.issue_date).localeCompare(b.i.due_date || b.i.issue_date));
 }
 function renderPayment(sh) {
-  const d = pd, e = entityById(d.entity_id), opens = d.party_id ? openInvoicesFor(e.id, d.direction, d.party_id) : [];
+  const d = pd, e = entityById(d.entity_id), opens = d.party_id ? openInvoicesFor(e.id, d.direction, d.party_id, d.currency) : [], cc = d.currency || e.base_currency;
+  const partyCcys = d.party_id ? [...new Set(fin.invoices.filter(i => i.entity_id === e.id && i.party_id === d.party_id && i.currency && i.status === "posted").map(i => i.currency))] : [];
   const alloc = r2(Object.values(d.alloc).reduce((s, v) => s + (Number(v) || 0), 0));
   sh.innerHTML = sheetHead(d.direction === "in" ? "Record money received" : "Record money paid", `${esc(e.name)} · ${e.base_currency} · recorded only when you save`) + `
   <form id="finPayment" class="sh-body" novalidate>
     <div class="grid2"><label class="field"><span>${d.direction === "in" ? "From" : "To"}</span><select class="input" id="fp-party">${partyOptions(e.id, d.party_id)}</select></label>
     <label class="field"><span>Date</span><input class="input" type="date" id="fp-date" value="${d.pay_date}"></label></div>
-    <div class="grid2"><label class="field"><span>Amount</span><input class="input num" type="number" step="0.01" min="0.01" id="fp-amt" value="${d.amount}"></label>
+    <div class="grid2"><label class="field"><span>Currency</span><select class="input" id="fp-ccy">${ccyOptions(e.base_currency, d.currency, partyCcys)}</select></label>
+      ${d.currency ? `<label class="field"><span>${d.direction === "in" ? "Reached the bank" : "Left the bank"} (${e.base_currency})</span><input class="input num" type="number" step="0.01" min="0.01" id="fp-base" value="${d.base_amount}" placeholder="from the bank advice"></label>` : `<span></span>`}</div>
+    ${d.currency ? `<p class="hint">Enter both amounts from the bank advice. The difference from the rate on the ${d.direction === "in" ? "invoices" : "bills"} is posted as a realised exchange gain or loss — no rate is assumed.</p>` : ""}
+    <div class="grid2"><label class="field"><span>Amount${d.currency ? ` (${d.currency})` : ""}</span><input class="input num" type="number" step="0.01" min="0.01" id="fp-amt" value="${d.amount}"></label>
     <label class="field"><span>${d.direction === "in" ? "Into" : "From"} account</span><select class="input" id="fp-acc">${moneyAccounts(e.id).map(a => `<option value="${a.id}" ${a.id === d.account_id ? "selected" : ""}>${esc(a.code + " " + a.name)}</option>`).join("")}</select></label></div>
     <div class="grid2"><label class="field"><span>Reference</span><input class="input" id="fp-ref" value="${esc(d.reference)}" placeholder="TT / cheque / receipt no."></label>
     <label class="field"><span>Note</span><input class="input" id="fp-memo" value="${esc(d.memo)}"></label></div>
     ${d.party_id ? (opens.length ? `<h3>Apply to ${d.direction === "in" ? "invoices" : "bills"}</h3><table class="rtable"><thead><tr><th>Number</th><th>Due</th><th class="num">Outstanding</th><th class="num">Apply</th></tr></thead><tbody>
-      ${opens.map(x => `<tr><td>${esc(x.i.number)}</td><td>${x.i.due_date ? fmtDate(x.i.due_date) : "—"}</td><td class="num">${money(x.out)}</td><td class="num"><input class="input sm num" type="number" step="0.01" min="0" max="${x.out}" data-alloc="${x.i.id}" value="${d.alloc[x.i.id] ?? ""}" style="width:8em"></td></tr>`).join("")}
-      <tr class="total"><td colspan="3"><button type="button" class="btn sm" data-act="fp-auto">Fill oldest first</button></td><td class="num" id="fp-alloc">${money(alloc)}</td></tr></tbody></table>
-      <p class="hint">Anything not applied stays on the ${d.direction === "in" ? "customer's" : "supplier's"} account as ${d.direction === "in" ? "a credit" : "an advance"}.</p>` : `<p class="hint">No open ${d.direction === "in" ? "invoices" : "bills"} for them — the payment will sit on their account.</p>`) : `<p class="hint">Choose who it's ${d.direction === "in" ? "from" : "to"} to apply it to ${d.direction === "in" ? "invoices" : "bills"}.</p>`}
+      ${opens.map(x => `<tr><td>${esc(x.i.number)}</td><td>${x.i.due_date ? fmtDate(x.i.due_date) : "—"}</td><td class="num">${money(x.out, cc)}</td><td class="num"><input class="input sm num" type="number" step="0.01" min="0" max="${x.out}" data-alloc="${x.i.id}" value="${d.alloc[x.i.id] ?? ""}" style="width:8em"></td></tr>`).join("")}
+      <tr class="total"><td colspan="3"><button type="button" class="btn sm" data-act="fp-auto">Fill oldest first</button></td><td class="num" id="fp-alloc">${money(alloc, cc)}</td></tr></tbody></table>
+      <p class="hint">Anything not applied stays on the ${d.direction === "in" ? "customer's" : "supplier's"} account as ${d.direction === "in" ? "a credit" : "an advance"}.</p>` : `<p class="hint">No open ${d.currency ? d.currency + " " : ""}${d.direction === "in" ? "invoices" : "bills"} for them — the payment will sit on their account.</p>`) : `<p class="hint">Choose who it's ${d.direction === "in" ? "from" : "to"} to apply it to ${d.direction === "in" ? "invoices" : "bills"}.</p>`}
     <div class="sheet-foot"><button class="btn primary block" type="submit" id="fpSave">Record payment</button></div>
   </form>`;
 }
-function syncPayment() { if (!pd || !$("fp-date")) return; Object.assign(pd, { party_id: val("fp-party"), pay_date: val("fp-date"), amount: val("fp-amt"), account_id: val("fp-acc"), reference: val("fp-ref"), memo: val("fp-memo") });
+function syncPayment() { if (!pd || !$("fp-date")) return; const base = entityById(pd.entity_id).base_currency, cc = val("fp-ccy");
+  Object.assign(pd, { currency: cc && cc !== base ? cc : "", base_amount: $("fp-base") ? val("fp-base") : pd.base_amount, party_id: val("fp-party"), pay_date: val("fp-date"), amount: val("fp-amt"), account_id: val("fp-acc"), reference: val("fp-ref"), memo: val("fp-memo") });
   document.querySelectorAll("[data-alloc]").forEach(i => { pd.alloc[i.dataset.alloc] = i.value; }); }
 async function submitPayment() {
   syncPayment();
@@ -308,8 +320,10 @@ async function submitPayment() {
   if (!amt || amt <= 0) return toastError("Enter the amount.");
   const allocations = Object.entries(pd.alloc).map(([invoice_id, a]) => ({ invoice_id, amount: r2(a) })).filter(a => a.amount > 0);
   if (r2(allocations.reduce((s, a) => s + a.amount, 0)) > amt) return toastError("You've applied more than the payment amount.");
+  if (pd.currency && !(r2(pd.base_amount) > 0)) return toastError(`Enter what ${pd.direction === "in" ? "reached" : "left"} the bank in ${entityById(pd.entity_id).base_currency}.`);
+  if (pd.currency && !pd.party_id) return toastError("Choose who the payment is " + (pd.direction === "in" ? "from." : "to."));
   const btn = $("fpSave"); busy(btn, true);
-  const r = await recordPayment({ ...pd, amount: amt, allocations });
+  const r = pd.currency ? await recordFxPayment({ ...pd, amount: amt, base_amount: r2(pd.base_amount), allocations }) : await recordPayment({ ...pd, amount: amt, allocations });
   busy(btn, false);
   if (r.error) return toastError(r.error);
   pd = null; await done("Payment recorded");
@@ -318,11 +332,11 @@ function renderPaymentView(sh, id) {
   const p = paymentById(id), e = entityById(p.entity_id), w = canWriteFin(e.id);
   const allocs = fin.allocations.filter(a => a.payment_id === p.id);
   sh.innerHTML = sheetHead(p.direction === "in" ? "Money received" : "Money paid", `${esc(e.name)} · ${fmtDate(p.pay_date)}`) + `<div class="sh-body">
-    <div class="inv-head"><b class="num big">${money(p.amount, e.base_currency)}</b>${p.status === "void" ? `<span class="pill inv-void">Void</span>` : ""}</div>
+    <div class="inv-head"><b class="num big">${money(p.currency ? p.base_amount : p.amount, e.base_currency)}</b>${p.currency ? `<small class="hint">${money(p.amount, p.currency)} at ${Number(p.fx_rate)}</small>` : ""}${p.status === "void" ? `<span class="pill inv-void">Void</span>` : ""}</div>
     ${p.status === "void" ? `<div class="banner warn">Void: ${esc(p.void_reason || "")}</div>` : ""}
     <dl class="kv"><dt>${p.direction === "in" ? "From" : "To"}</dt><dd>${esc((partyById(p.party_id) || {}).name || "—")}</dd><dt>Account</dt><dd>${esc((accById(p.account_id) || {}).name || "")}</dd>
-      ${p.reference ? `<dt>Reference</dt><dd>${esc(p.reference)}</dd>` : ""}${p.memo ? `<dt>Note</dt><dd>${esc(p.memo)}</dd>` : ""}<dt>Journal</dt><dd><button class="linkbtn" data-act="fin-open-journal" data-id="${p.journal_id}">#${(journalById(p.journal_id) || {}).number || ""}</button></dd></dl>
-    ${allocs.length ? `<h3>Applied to</h3><ul class="plain">${allocs.map(a => { const i = invoiceById(a.invoice_id); return `<li><button class="linkbtn" data-act="fin-open-invoice" data-id="${a.invoice_id}">${esc(i ? i.number : "")}</button> — ${money(a.amount, e.base_currency)}</li>`; }).join("")}</ul>` : ""}
+      ${p.reference ? `<dt>Reference</dt><dd>${esc(p.reference)}</dd>` : ""}${p.memo ? `<dt>Note</dt><dd>${esc(p.memo)}</dd>` : ""}${p.currency && Number(p.fx_gain) ? `<dt>Realised exchange ${Number(p.fx_gain) > 0 ? "gain" : "loss"}</dt><dd class="${Number(p.fx_gain) > 0 ? "ok-text" : "bad-text"}">${money(Math.abs(p.fx_gain), e.base_currency)}</dd>` : ""}<dt>Journal</dt><dd><button class="linkbtn" data-act="fin-open-journal" data-id="${p.journal_id}">#${(journalById(p.journal_id) || {}).number || ""}</button></dd></dl>
+    ${allocs.length ? `<h3>Applied to</h3><ul class="plain">${allocs.map(a => { const i = invoiceById(a.invoice_id); return `<li><button class="linkbtn" data-act="fin-open-invoice" data-id="${a.invoice_id}">${esc(i ? i.number : "")}</button> — ${money(a.amount, p.currency || e.base_currency)}</li>`; }).join("")}</ul>` : ""}
     ${filesPanel(e.id, "payment_id", p.id)}
     ${w && p.status === "posted" ? `<div class="sheet-foot"><button class="btn danger" data-act="fin-void-payment" data-id="${p.id}">Void payment</button></div>` : ""}</div>`;
 }
@@ -524,8 +538,9 @@ export async function handleFinChange(ev, rerender) {
       rerenderSheet(); }
     else invoiceTotalLive();
     return true; }
-  if (t.id === "fp-party" && pd) { syncPayment(); pd.alloc = {}; rerenderSheet(); return true; }
-  if (t.dataset && t.dataset.alloc !== undefined && pd) { syncPayment(); const a = r2(Object.values(pd.alloc).reduce((s, v) => s + (Number(v) || 0), 0)); if ($("fp-alloc")) $("fp-alloc").textContent = money(a); return true; }
+  if ((t.id === "fp-party" || t.id === "fp-ccy") && pd) { syncPayment(); pd.alloc = {}; rerenderSheet(); return true; }
+  if (t.id === "fi-ccy" && idraft) { syncInvoiceHead(); if (!idraft.currency) idraft.fx_rate = ""; rerenderSheet(); return true; }
+  if (t.dataset && t.dataset.alloc !== undefined && pd) { syncPayment(); const a = r2(Object.values(pd.alloc).reduce((s, v) => s + (Number(v) || 0), 0)); if ($("fp-alloc")) $("fp-alloc").textContent = money(a, pd.currency || entityById(pd.entity_id).base_currency); return true; }
   if (t.dataset && t.dataset.act === "fin-attach") { const f = t.files[0]; if (!f) return true; toast(`Uploading ${f.name}…`);
     const r = await uploadFinFile(f, t.dataset.entity, { [t.dataset.field]: t.dataset.id }, safeFileName); t.value = ""; if (r.error) return toastError(r.error), true; toast("Attached"); rerenderSheet(); return true; }
   if (t.dataset && t.dataset.act === "fin-role") { const e = curEntity(); const r = await run(sb.from("fin_members").update({ role: t.value }).eq("entity_id", e.id).eq("user_id", t.dataset.user)); if (r.error) toastError(r.error); await refresh(); rerender(); return true; }

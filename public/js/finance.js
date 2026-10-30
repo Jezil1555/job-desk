@@ -141,6 +141,19 @@ export function aging(invoices, totalsById, asOf) {
   const total = r2(Object.values(buckets).reduce((s, v) => s + v, 0));
   return { buckets, total, rows: rows.sort((a, b) => (b.days ?? -1e9) - (a.days ?? -1e9)) };
 }
+/** Invoice totals converted to the books' base currency at the rate each document was posted at.
+ *  Foreign-currency invoices keep their totals in their own currency (fin_invoice_totals); every aggregate uses this map. */
+export function baseTotals(invoices, totals) {
+  const rate = new Map(invoices.map(i => [i.id, Number(i.fx_rate) || 1]));
+  const out = new Map();
+  for (const [id, t] of totals) { const k = rate.get(id) || 1; out.set(id, { ...t, total: r2(Number(t.total) * k), paid: r2(Number(t.paid) * k) }); }
+  return out;
+}
+/** Change in the base value of an open foreign item at a closing rate; positive = gain for the books. */
+export function revalueGain(kind, outstanding, bookedRate, closingRate) {
+  const booked = r2(outstanding * bookedRate), now = r2(outstanding * closingRate), diff = r2(now - booked);
+  return { booked, now, gain: kind === "sale" ? diff : r2(-diff) };
+}
 export const AGING_LABEL = { current: "Not yet due", d1_30: "1–30 days", d31_60: "31–60 days", d61_90: "61–90 days", d90: "Over 90 days", no_due: "No due date" };
 
 /** Budget vs actual for income and expense accounts across months (YYYY-MM-01 keys). */

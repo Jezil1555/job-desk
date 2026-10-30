@@ -67,7 +67,7 @@ export function renderFinanceHome(view) {
   ${fin.entities.some(e => e.archived) ? section("Archived", `<ul class="plain">${fin.entities.filter(e => e.archived).map(e => `<li><a href="#/finance/${e.id}/overview">${esc(e.name)}</a></li>`).join("")}</ul>`) : ""}`;
 }
 function invTotalsOut(eid, kind) {
-  return r2(fin.invoices.filter(i => i.entity_id === eid && i.kind === kind && i.status === "posted").reduce((s, i) => { const t = fin.totals.get(i.id); return s + (t ? Number(t.total) - Number(t.paid) : 0); }, 0));
+  return r2(fin.invoices.filter(i => i.entity_id === eid && i.kind === kind && i.status === "posted").reduce((s, i) => { const t = fin.totalsBase.get(i.id); return s + (t ? Number(t.total) - Number(t.paid) : 0); }, 0));
 }
 
 /* ======================= one entity ======================= */
@@ -102,7 +102,7 @@ function overview(e) {
   const bal = a => natural(a, ls.filter(l => l.account_id === a.id).reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0));
   const moneyAccs = moneyAccounts(e.id).map(a => ({ a, b: bal(a) }));
   const inv = fin.invoices.filter(i => i.entity_id === e.id && i.status === "posted");
-  const st = i => invoiceStatus(i, fin.totals.get(i.id), t), out = i => { const x = fin.totals.get(i.id); return x ? r2(Number(x.total) - Number(x.paid)) : 0; };
+  const st = i => invoiceStatus(i, fin.totals.get(i.id), t), out = i => { const x = fin.totalsBase.get(i.id); return x ? r2(Number(x.total) - Number(x.paid)) : 0; };
   const overdueInv = inv.filter(i => i.kind === "sale" && st(i) === "overdue"), billsDue = inv.filter(i => i.kind === "purchase" && out(i) > 0 && i.due_date && i.due_date <= addDays(t, 7));
   const drafts = fin.journals.filter(j => j.entity_id === e.id && j.status === "draft").length + fin.invoices.filter(i => i.entity_id === e.id && i.status === "draft").length;
   const unrec = fin.statement.filter(s => s.entity_id === e.id && s.status === "unmatched").length;
@@ -151,10 +151,11 @@ function entries(e) {
 
 function invRow(i, e) {
   const t = fin.totals.get(i.id) || { total: 0, paid: 0 }, s = invoiceStatus(i, t, today()), p = partyById(i.party_id);
+  const cc = i.currency || e.base_currency, tb = i.currency && fin.totalsBase.get(i.id);
   return `<div class="trow" data-act="fin-open-invoice" data-id="${i.id}" role="button" tabindex="0"><span class="kico">${i.kind === "sale" ? "↗" : "↙"}</span>
     <div class="tmain"><div class="ttitle">${esc(p ? p.name : "No party")} <small class="hint">${esc(i.number || "Draft")}${i.party_reference ? " · " + esc(i.party_reference) : ""}</small></div>
     <div class="tmeta">${fmtDate(i.issue_date)}${i.due_date ? ` · due ${fmtDate(i.due_date)}` : " · no due date"}${i.task_id ? ` · ${ICON.tasks} linked task` : ""}</div></div>
-    <div class="tside"><b class="num">${M(t.total, e)}</b>${pill(s)}${s === "partial" || s === "overdue" ? `<small class="num">${M(Number(t.total) - Number(t.paid), e)} left</small>` : ""}</div></div>`;
+    <div class="tside"><b class="num">${money(t.total, cc)}</b>${tb ? `<small class="hint num">${M(tb.total, e)} at ${Number(i.fx_rate)}</small>` : ""}${pill(s)}${s === "partial" || s === "overdue" ? `<small class="num">${money(Number(t.total) - Number(t.paid), cc)} left</small>` : ""}</div></div>`;
 }
 function invoicesTab(e, kind) {
   const u = ui(), t = today();
@@ -162,20 +163,22 @@ function invoicesTab(e, kind) {
   const st = i => invoiceStatus(i, fin.totals.get(i.id), t);
   if (u.invStatus === "open") list = list.filter(i => ["draft", "unpaid", "partial", "overdue"].includes(st(i)));
   else if (u.invStatus) list = list.filter(i => st(i) === u.invStatus);
-  const ag = aging(fin.invoices.filter(i => i.entity_id === e.id && i.kind === kind), fin.totals, t);
+  const ag = aging(fin.invoices.filter(i => i.entity_id === e.id && i.kind === kind), fin.totalsBase, t);
   const noun = kind === "sale" ? (e.kind === "personal" ? "claim" : "invoice") : "bill";
   return `<div class="tiles">${Object.entries(AGING_LABEL).map(([k, l]) => tile(M(ag.buckets[k], e), l, k === "d90" && ag.buckets[k] ? "bad" : "")).join("")}${tile(M(ag.total, e), "Total outstanding")}</div>
   <div class="filters kfilters noprint"><select class="input" id="fi-status">${[["open", "Open"], ["", "All"], ["draft", "Drafts"], ["unpaid", "Unpaid"], ["partial", "Part paid"], ["overdue", "Overdue"], ["paid", "Paid"], ["void", "Void"]].map(([k, l]) => `<option value="${k}" ${u.invStatus === k ? "selected" : ""}>${l}</option>`).join("")}</select>
-    ${canWriteFin(e.id) ? `<button class="btn primary" data-act="fin-new-invoice" data-kind="${kind}">${ICON.plus}New ${noun}</button><button class="btn" data-act="fin-pay" data-dir="${kind === "sale" ? "in" : "out"}">${kind === "sale" ? "Receive payment" : "Pay a bill"}</button>` : ""}</div>
+    ${canWriteFin(e.id) ? `<button class="btn primary" data-act="fin-new-invoice" data-kind="${kind}">${ICON.plus}New ${noun}</button><button class="btn" data-act="fin-pay" data-dir="${kind === "sale" ? "in" : "out"}">${kind === "sale" ? "Receive payment" : "Pay a bill"}</button>${fin.invoices.some(i => i.entity_id === e.id && i.currency && i.status === "posted") ? `<button class="btn" data-act="fx-reval">Revalue foreign currency…</button>` : ""}` : ""}</div>
+  ${ag.total && fin.invoices.some(i => i.entity_id === e.id && i.kind === kind && i.currency && i.status === "posted") ? `<p class="hint">Totals are in ${e.base_currency}; foreign-currency ${noun}s are counted at the rate they were posted at.</p>` : ""}
   ${list.length ? `<div class="list">${list.map(i => invRow(i, e)).join("")}</div>` : emptyState(`No ${noun}s here`, kind === "sale" ? "Raise an invoice to record a sale on credit. The customer's balance updates when you record their payment." : "Enter supplier bills as they arrive; paying them is a separate step you record when the money leaves.")}`;
 }
 
+const payAmt = (p, e) => p.currency ? `${M(p.base_amount, e)}<br><small class="hint">${money(p.amount, p.currency)}</small>` : M(p.amount, e);
 function payments(e) {
   const ps = fin.payments.filter(p => p.entity_id === e.id);
   return `<div class="filters kfilters noprint">${canWriteFin(e.id) ? `<button class="btn" data-act="fin-pay" data-dir="in">Money in</button><button class="btn" data-act="fin-pay" data-dir="out">Money out</button>` : ""}</div>
   ${ps.length ? `<div class="tablewrap"><table class="rtable"><thead><tr><th>Date</th><th>Who</th><th>Account</th><th>Reference</th><th class="num">In</th><th class="num">Out</th><th></th></tr></thead><tbody>
     ${ps.map(p => `<tr class="clickrow ${p.status === "void" ? "muted" : ""}" data-act="fin-open-payment" data-id="${p.id}"><td>${fmtDate(p.pay_date)}</td><td>${esc((partyById(p.party_id) || {}).name || "—")}</td><td>${esc((accById(p.account_id) || {}).name || "")}</td>
-      <td>${esc(p.reference || "")}</td><td class="num">${p.direction === "in" ? M(p.amount, e) : ""}</td><td class="num">${p.direction === "out" ? M(p.amount, e) : ""}</td><td>${p.status === "void" ? pill("void") : ""}</td></tr>`).join("")}</tbody></table></div>`
+      <td>${esc(p.reference || "")}</td><td class="num">${p.direction === "in" ? payAmt(p, e) : ""}</td><td class="num">${p.direction === "out" ? payAmt(p, e) : ""}</td><td>${p.status === "void" ? pill("void") : ""}</td></tr>`).join("")}</tbody></table></div>`
     : emptyState("No payments yet", "Payments against invoices and bills appear here. They're only ever recorded by you — completing a task never marks anything paid.")}`;
 }
 
@@ -269,7 +272,7 @@ function reports(e) {
   else if (u.report === "bs") body = bsReport(e, balanceSheet(accs, ls, to));
   else if (u.report === "cf") body = cfReport(e, cashFlow(accs, ls, from, to));
   else if (u.report === "tb") body = tbReport(e, trialBalance(accs, ls, to));
-  else if (u.report === "ar" || u.report === "ap") body = agingReport(e, aging(fin.invoices.filter(i => i.entity_id === e.id && i.kind === (u.report === "ar" ? "sale" : "purchase")), fin.totals, to));
+  else if (u.report === "ar" || u.report === "ap") body = agingReport(e, aging(fin.invoices.filter(i => i.entity_id === e.id && i.kind === (u.report === "ar" ? "sale" : "purchase")), fin.totalsBase, to));
   else body = glReport(e, accs, ls, from, to);
   const asAt = ["bs", "tb", "ar", "ap"].includes(u.report);
   return `<div class="filters kfilters noprint">

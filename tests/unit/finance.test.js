@@ -136,3 +136,17 @@ test("formatting and periods", () => {
   assert.deepEqual(monthsBetween("2026-11-01", "2027-02-01"), ["2026-11-01", "2026-12-01", "2027-01-01", "2027-02-01"]);
   assert.equal(monthEnd("2026-02-01"), "2026-02-28");
 });
+
+import { baseTotals, revalueGain } from "../../public/js/finance.js";
+test("foreign invoice totals are converted at the posted rate for aggregates; base invoices unchanged", () => {
+  const invs = [{ id: "a", fx_rate: "3.64" }, { id: "b", fx_rate: null }];
+  const m = baseTotals(invs, new Map([["a", { invoice_id: "a", total: "1000", paid: "400" }], ["b", { invoice_id: "b", total: "250", paid: "0" }]]));
+  assert.deepEqual([m.get("a").total, m.get("a").paid, m.get("b").total], [3640, 1456, 250]);
+  const ag = aging([{ id: "a", status: "posted", due_date: null }, { id: "b", status: "posted", due_date: null }], m, "2026-10-31");
+  assert.equal(ag.total, 2434);
+});
+test("revaluation gain: receivables gain when the currency strengthens, payables lose", () => {
+  assert.deepEqual(revalueGain("sale", 600, 3.64, 3.62), { booked: 2184, now: 2172, gain: -12 });
+  assert.deepEqual(revalueGain("purchase", 200, 4, 4.1), { booked: 800, now: 820, gain: -20 });
+  assert.equal(revalueGain("purchase", 200, 4, 3.9).gain, 20);
+});

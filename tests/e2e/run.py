@@ -40,7 +40,7 @@ def fin_fixture():
     return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
             "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": [],
-            "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": []}
+            "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": [], "fin_fx_revaluations": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -247,7 +247,10 @@ def handle(route):
                 j = next(x for x in DB["fin_journals"] if x["id"] == it["journal_id"])
                 if j["status"] == "posted": return err("posted_immutable: lines of a posted entry can't be changed")
                 it = {"debit": 0, "credit": 0, "party_id": None, "statement_line_id": None, "sort": 0, **it, "entity_id": j["entity_id"]}
-            if table == "fin_invoices": it = {"status": "draft", "number": None, "journal_id": None, "task_id": None, "due_date": None, **it}
+            if table == "fin_invoices":
+                it = {"status": "draft", "number": None, "journal_id": None, "task_id": None, "due_date": None, "currency": None, "fx_rate": None, **it}
+                if it["currency"] == next(e for e in DB["fin_entities"] if e["id"] == it["entity_id"])["base_currency"]: it["currency"] = None
+                if not it["currency"]: it["fx_rate"] = None
             if table == "fin_invoice_lines": it = {"item_id": None, "account_id": None, **it, "amount": round(float(it["qty"]) * float(it["unit_price"]), 2)}
             if table == "fin_statement_lines": it = {"status": "unmatched", "matched_line_id": None, "reference": None, **it}
             rows.append(it); out.append(it)
@@ -392,6 +395,10 @@ def on_hand(item):
 def add_move(eid, item, date, qty, cost, source, jid, note, order=None, exc=None):
     mid = str(uuid.uuid4()); DB["fin_stock_moves"].append({"id": mid, "entity_id": eid, "item_id": item, "move_date": date, "qty": qty, "unit_cost": cost, "source": source, "journal_id": jid, "note": note,
         "production_order_id": order, "exception_id": exc, "created_at": iso(now)}); return mid
+def prod_fx(eid):
+    a = next((x for x in DB["fin_accounts"] if x["entity_id"] == eid and x.get("system_key") == "fx"), None)
+    if not a: a = {"id": f"{eid[:8]}-acc-4900", "entity_id": eid, "code": "4900", "name": "Exchange gains and losses", "type": "income", "subtype": "other", "system_key": "fx", "is_active": True, "description": None}; DB["fin_accounts"].append(a)
+    return a["id"]
 def prod_rpc(fn, b):
     today = today_qa()
     if fn == "fin_goods_receipt":
@@ -453,9 +460,11 @@ def fin_rpc(fn, b):
     if fn == "fin_post_invoice":
         i = next(x for x in DB["fin_invoices"] if x["id"] == b["p_invoice"])
         if not i.get("party_id"): raise FinError("party_required: choose the customer")
-        ls = [l for l in DB["fin_invoice_lines"] if l["invoice_id"] == i["id"]]; total = round(sum(l["amount"] for l in ls), 2)
+        if i.get("currency") and not i.get("fx_rate"): raise FinError("rate_required: enter the exchange rate for " + i["currency"])
+        k = float(i.get("fx_rate") or 1)
+        ls = [l for l in DB["fin_invoice_lines"] if l["invoice_id"] == i["id"]]; total = round(sum(round(l["amount"] * k, 2) for l in ls), 2)
         sale = i["kind"] == "sale"
-        jl = [{"account_id": l["account_id"] or sys_acc(i["entity_id"], "sales"), "description": l["description"], ("credit" if sale else "debit"): l["amount"]} for l in ls]
+        jl = [{"account_id": l["account_id"] or sys_acc(i["entity_id"], "sales"), "description": l["description"], ("credit" if sale else "debit"): round(l["amount"] * k, 2)} for l in ls]
         jl.append({"account_id": sys_acc(i["entity_id"], "ar" if sale else "ap"), "party_id": i["party_id"], ("debit" if sale else "credit"): total})
         no = ("INV-" if sale else "BILL-") + str(next_no(i["entity_id"], "next_invoice_no" if sale else "next_bill_no")).zfill(4)
         i["journal_id"] = sys_journal(i["entity_id"], i["issue_date"], ("Invoice " if sale else "Bill ") + no, "invoice" if sale else "bill", i["id"], jl)
@@ -473,6 +482,42 @@ def fin_rpc(fn, b):
         DB["fin_payments"][-1]["journal_id"] = jid
         for a in b["p_allocations"]: DB["fin_allocations"].append({"payment_id": pid, "invoice_id": a["invoice_id"], "entity_id": eid, "amount": float(a["amount"])})
         return pid
+    if fn == "fin_record_fx_payment":
+        p = b["p"]; eid = p["entity_id"]; inn = p["direction"] == "in"; amt, base = float(p["amount"]), float(p.get("base_amount") or 0)
+        if not base: raise FinError("base_amount_required: enter what actually reached the bank")
+        tot = {t["invoice_id"]: t for t in inv_totals()}; ctrl = 0; s_ = 0
+        for a in p["allocations"]:
+            inv = next(x for x in DB["fin_invoices"] if x["id"] == a["invoice_id"])
+            if inv.get("currency") != p["currency"]: raise FinError("currency_mismatch")
+            t = tot[a["invoice_id"]]
+            if float(a["amount"]) > t["total"] - t["paid"]: raise FinError("overpayment")
+            ctrl += round(float(a["amount"]) * float(inv["fx_rate"]), 2); s_ += float(a["amount"])
+        rate = base / amt; ctrl = round(ctrl + (amt - s_) * rate, 2); gain = round(base - ctrl if inn else ctrl - base, 2)
+        pid = str(uuid.uuid4())
+        DB["fin_payments"].append({"id": pid, "entity_id": eid, "direction": p["direction"], "party_id": p["party_id"], "pay_date": p["pay_date"], "amount": amt, "account_id": p["account_id"],
+            "reference": p.get("reference"), "memo": p.get("memo"), "status": "posted", "journal_id": None, "currency": p["currency"], "fx_rate": round(rate, 8), "base_amount": base, "fx_gain": gain, "created_at": iso(now)})
+        jl = [{"account_id": p["account_id"], ("debit" if inn else "credit"): base}, {"account_id": sys_acc(eid, "ar" if inn else "ap"), "party_id": p["party_id"], ("credit" if inn else "debit"): ctrl}]
+        if gain: jl.append({"account_id": prod_fx(eid), ("credit" if gain > 0 else "debit"): abs(gain)})
+        DB["fin_payments"][-1]["journal_id"] = sys_journal(eid, p["pay_date"], "FX payment", "payment", pid, jl)
+        for a in p["allocations"]: DB["fin_allocations"].append({"payment_id": pid, "invoice_id": a["invoice_id"], "entity_id": eid, "amount": float(a["amount"])})
+        return pid
+    if fn == "fin_fx_open_items":
+        tot = {t["invoice_id"]: t for t in inv_totals()}; out = []
+        for i in DB["fin_invoices"]:
+            if i["entity_id"] != b["p_entity"] or i["status"] != "posted" or not i.get("currency") or i["issue_date"] > b["p_date"]: continue
+            o = round(tot[i["id"]]["total"] - tot[i["id"]]["paid"], 2)
+            if o > 0: out.append({"invoice_id": i["id"], "number": i["number"], "kind": i["kind"], "party_id": i["party_id"], "currency": i["currency"], "outstanding": o, "booked_rate": float(i["fx_rate"]), "booked_base": round(o * float(i["fx_rate"]), 2)})
+        return out
+    if fn == "fin_fx_revalue":
+        e = b["p_entity"]; net = 0; detail = []
+        for x in fin_rpc("fin_fx_open_items", {"p_entity": e, "p_date": b["p_date"]}):
+            r_ = float(b["p_rates"][x["currency"]]); d_ = round(round(x["outstanding"] * r_, 2) - x["booked_base"], 2); g = d_ if x["kind"] == "sale" else -d_
+            net += g; detail.append({**x, "closing_rate": r_, "gain": g})
+        vid = str(uuid.uuid4())
+        DB["fin_fx_revaluations"].insert(0, {"id": vid, "entity_id": e, "rev_date": b["p_date"], "rates": b["p_rates"], "detail": detail, "net": round(net, 2), "status": "posted", "cancel_reason": None, "created_at": iso(now)})
+        return vid
+    if fn == "fin_fx_revaluation_cancel":
+        v = next(x for x in DB["fin_fx_revaluations"] if x["id"] == b["p_id"]); v.update(status="cancelled", cancel_reason=b["p_reason"]); return None
     if fn == "fin_match_statement":
         st = next(x for x in DB["fin_statement_lines"] if x["id"] == b["p_statement"]); l = next(x for x in DB["fin_lines"] if x["id"] == b["p_line"])
         if round(float(l["debit"]) - float(l["credit"]), 2) != round(float(st["amount"]), 2): raise FinError("amount_mismatch")
@@ -1087,6 +1132,49 @@ with sync_playwright() as pw:
     shot(page, "29-production-order", True)
     page.keyboard.press("Escape"); page.goto(BASE + f"/#/finance/{FE1}/stock"); page.goto(BASE + f"/#/finance/{FE1}/production"); page.wait_for_selector('[data-act="prod-open"]')
     check("orders list shows the completed job at 290", "completed" in page.inner_text("#view").lower() and "290" in page.inner_text('[data-act="prod-open"]'))
+    ctx.close()
+
+    # ---------- Increment 8: foreign currency ----------
+    ctx, page = new_page(b, 1366, 900)
+    LON = str(uuid.uuid4()); DB["fin_parties"].append({"id": LON, "entity_id": FE1, "name": "London client", "kind": "customer", "email": None, "phone": None, "notes": None, "archived": False, "created_at": iso(now)})
+    page.goto(BASE + f"/#/finance/{FE1}/invoices"); page.wait_for_selector('[data-act="fin-new-invoice"]')
+    page.click('[data-act="fin-new-invoice"]'); page.wait_for_selector("#finInvoice")
+    page.select_option("#fi-party", LON); page.select_option("#fi-ccy", "USD"); page.wait_for_selector("#fi-rate")
+    check("choosing USD asks for the rate (left blank)", page.input_value("#fi-rate") == "" and "prices below are in usd" in page.inner_text("#finInvoice").lower())
+    page.fill('[data-il="0"][data-f="description"]', "Two suits"); page.fill('[data-il="0"][data-f="qty"]', "2"); page.fill('[data-il="0"][data-f="unit_price"]', "500")
+    page.click('#finInvoice [data-post="1"]'); page.wait_for_timeout(300)
+    check("posting a USD invoice without a rate is stopped", "exchange rate" in page.inner_text("#toast").lower() and not any(i.get("currency") == "USD" for i in DB["fin_invoices"]))
+    page.fill("#fi-rate", "3.64"); page.click('#finInvoice [data-post="1"]'); page.wait_for_timeout(1000)
+    ui_ = next((i for i in DB["fin_invoices"] if i.get("currency") == "USD"), {})
+    check("USD invoice saved with its rate and posted at QAR 3,640", ui_.get("status") == "posted" and float(ui_.get("fx_rate") or 0) == 3.64
+          and any(l["debit"] == 3640 for l in DB["fin_lines"] if l["journal_id"] == ui_.get("journal_id")))
+    page.wait_for_selector(".list .trow")
+    row = page.inner_text(f'.trow[data-id="{ui_.get("id")}"]')
+    check("invoice list shows USD 1,000 and the QAR value", "USD" in row and "1,000.00" in row and "3,640.00" in row, row)
+    page.click('[data-act="fx-reval"]'); page.wait_for_selector("#fx-date")
+    page.fill("#fx-date", today_qa()); page.dispatch_event("#fx-date", "change"); page.wait_for_selector('[data-fxrate="USD"]')
+    check("revaluation lists the open USD invoice and waits for a closing rate", page.locator("#fxPost").is_disabled() and ui_["number"] in page.inner_text("#fxTable"))
+    page.fill('[data-fxrate="USD"]', "3.62"); page.dispatch_event('[data-fxrate="USD"]', "change"); page.wait_for_timeout(200)
+    check("preview shows the unrealised loss of 20", page.inner_text("#fx-net").replace("−", "-").startswith("-") and "20.00" in page.inner_text("#fx-net"), page.inner_text("#fx-net"))
+    page.click("#fxPost"); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(900)
+    rv = DB["fin_fx_revaluations"][0] if DB["fin_fx_revaluations"] else {}
+    check("revaluation posted with the entered rate", rv.get("rates") == {"USD": 3.62} and rv.get("net") == -20)
+    page.click(f'[data-act="fx-cancel"][data-id="{rv.get("id")}"]'); page.wait_for_selector("#dlgIn"); page.fill("#dlgIn", "Wrong closing rate"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(800)
+    check("revaluation can be cancelled with a reason", rv.get("status") == "cancelled" and "cancelled" in page.inner_text(".sheet").lower())
+    page.keyboard.press("Escape"); page.wait_for_timeout(300)
+    page.goto(BASE + f"/#/finance/{FE1}/overview"); page.goto(BASE + f"/#/finance/{FE1}/invoices"); page.wait_for_selector(f'.trow[data-id="{ui_["id"]}"]')
+    page.click(f'.trow[data-id="{ui_["id"]}"]'); page.wait_for_selector('[data-act="fin-pay"]')
+    check("invoice sheet shows the USD amounts and the booked rate", "1 usd = 3.64 qar" in page.inner_text(".sheet").lower())
+    page.click('.sheet [data-act="fin-pay"]'); page.wait_for_selector("#fp-base")
+    check("payment form opens in USD with the open amount", page.input_value("#fp-ccy") == "USD" and float(page.input_value("#fp-amt")) == 1000)
+    page.click("#fpSave"); page.wait_for_timeout(300)
+    check("foreign payment needs the bank amount", "reached the bank" in page.inner_text("#toast").lower())
+    page.fill("#fp-base", "3660"); page.fill("#fp-ref", "SWIFT 8812"); page.click("#fpSave"); page.wait_for_timeout(1000)
+    py = next((p for p in DB["fin_payments"] if p.get("currency") == "USD"), {})
+    check("USD 1,000 received as QAR 3,660: realised gain 20 recorded", py.get("base_amount") == 3660 and py.get("fx_gain") == 20)
+    page.goto(BASE + f"/#/finance/{FE1}/payments"); page.wait_for_selector(".rtable")
+    check("payments list shows the QAR received and the USD amount", "3,660.00" in page.inner_text(".rtable") and "USD" in page.inner_text(".rtable"))
+    shot(page, "30-fx-payments", True)
     ctx.close()
 
     # ---------- phone, light + dark ----------

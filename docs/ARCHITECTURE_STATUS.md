@@ -22,11 +22,19 @@ actual response (text + date), and an outcome (fulfilled / partly / not fulfille
 cancelling needs a reason. Reopening clears the outcome (kept in history). Completing a related task never closes a commitment.
 Tests: 12 live DB checks (rolled back), rollback verified locally, 4 browser checks.
 
-## 4. Financial ledger integrity — Met (FX partial)
+## 4. Financial ledger integrity — Met (FX: increment 8, 31 Oct)
 Chart of accounts, journal headers/lines, balance check on posting, posting controls, lock date, reversals, payment allocations, AR/AP subledgers,
 per-entity isolation, bank reconciliation, inventory accounting, audit history. Every dashboard figure is computed from posted lines.
 Tests prove the trial balance balances and invoice/payment flows don't double-count (phase3 tests, 73 checks).
-- Partial: foreign currency. Each set of books has one base currency; lines carry `fx_currency`/`fx_amount`, but there are no FX invoices, revaluation or realised gain/loss.
+- Foreign currency: each set of books keeps one base currency. Invoices and bills can be raised in another currency with a rate the person enters
+  (never assumed); posting converts each line at that rate and ledger lines keep the foreign amount. Foreign payments record both the foreign amount
+  and what actually reached or left the bank; the invoice is cleared at its booked rate and the difference is posted as a **realised** gain or loss
+  to "Exchange gains and losses" (4900). A payment can only settle invoices in its own currency (database trigger). **Month-end revaluation** values
+  open foreign items at closing rates the person enters, posts the **unrealised** difference and reverses it the next day; it can be cancelled with
+  a reason (opposite entries, originals kept). Totals, ageing and dashboard tiles count foreign documents in base at their booked rate.
+  Limitation: an unallocated foreign payment sitting on account is not revalued.
+  Tests: 29 checks run locally and live (rolled back), earlier finance suites re-run on top (phase 3: 73, partners: 61, inter-entity: 21,
+  production: 24 — all pass), rollback verified locally, 2 unit, 13 browser checks.
 
 ## 5. Entity separation — Met (increment 6, 31 Oct)
 Personal, Dlusso, Fitness Hub and Burgery are separate books; cross-book account use is rejected; nothing auto-treats a transfer as income/expense.
@@ -74,6 +82,7 @@ Tests: 11 live DB checks (rolled back), rollback verified locally, 4 browser che
 Each feature so far has a schema, backend, frontend, permission tests, validation tests and persistence checks before deploy. Increments continue one at a time.
 
 ## Known defects / open items
+- Browser test "goal progress" occasionally fails on timing (passes on re-run); test-only, the screen itself is correct.
 - Google Calendar live sync: built and deployed; waits on the Google OAuth client and `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets.
 - Dashboard items still with the user: Supabase Site URL, leaked-password protection, `ANTHROPIC_API_KEY`.
 - Dlusso: PR-0001 (5,186) payroll source to verify; four best-guess accounts; bank opening balance not entered (bank shows −8,000).
@@ -86,11 +95,11 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 5. ~~Notification reliability~~ — done.
 6. ~~Inter-entity transactions~~ — done.
 7. ~~Dlusso production costing~~ — done.
-8. **Foreign currency** — FX invoices/bills, realised gain/loss, month-end revaluation.
+8. ~~Foreign currency~~ — done.
 9. **Templates and project-specific fields** on the shared task engine.
 10. **Rollback scripts** for each migration with a tested rollback procedure.
 
 ## Deployment status
-- App: Render, auto-deploy from `main` (latest: production costing).
+- App: Render, auto-deploy from `main` (latest: foreign currency).
 - Database: all migrations in `supabase/migrations` applied to project `lvusersarnzzamdgvxgm`.
 - Edge functions: `send-push`, `calendar-feed`, `assistant`, `gcal-sync`.
