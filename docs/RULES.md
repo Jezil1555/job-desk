@@ -98,3 +98,17 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 - **Reminders**: owners and bookkeepers are notified once when a posted bill is due within 3 days, and once when a bill or customer invoice becomes overdue.
 - **Audit**: every change to books, members, accounts, entries, invoices, payments, statement lines and budgets is written to an append-only finance log that members can read.
 - Receipts and invoices are stored in a private `finance` bucket and open through links that expire after 10 minutes.
+
+## Smart capture, briefing & messages (Phase 4)
+- Quick Capture reads what you type: dates (today, tomorrow, fri, next week, in 3 days, 5 nov, 12/11 — day first), times (3pm, 15:00), `follow up <date>`, `#workspace`, `@person`, `!high` / `!critical` / `!low`. Each is shown as a chip before saving; removing a chip keeps those words in the title. Nothing is scheduled unless you typed a date. A time on its own ("at 4pm") means today and is shown as a chip.
+- The Command Centre briefing is counted from stored records (your overdue, due today, follow-ups to chase, blocked, bills due within 7 days, habits).
+- Message drafts for follow-ups and waiting tasks are templates you edit. They open in your own WhatsApp or email app; Job Desk never sends anything. "I sent it — log it" records the contact (follow-up log / task update) and sets the last-contact date.
+
+## Calendar link (Phase 4)
+- One private, read-only iCal link per person (Settings → Calendar). It lists your open task deadlines and follow-up dates, follow-up tracker chases you own, upcoming milestones in your workspaces and — only if you choose — unpaid bills due in books you keep. Window: 60 days back to 400 days ahead.
+- Only a SHA-256 hash of the link's token is stored. Making a new link stops the old one; turning it off revokes it. Anyone with the link can read those entries, so keep it private.
+
+## AI assistant (Phase 4)
+- Off by default; each person turns it on in Settings. Requires the `ANTHROPIC_API_KEY` secret on the Supabase project (optional `AI_MODEL`, default `claude-sonnet-5-5`; `AI_DAILY_LIMIT`, default 60 requests per 24 hours).
+- Only the text needed for the button pressed is sent (meeting notes, a follow-up's facts, the week's numbers and task titles, or bank line descriptions/amounts with account names). Job Desk stores only a usage row (action, token counts), never the content.
+- Results are suggestions: action items go into the review list, drafts into the editor, summaries into the notes box, account suggestions onto buttons. The assistant has no database access; it cannot create tasks, change dates, post entries, mark payments or send messages, and its output is validated (e.g. suggested accounts must be from your own list).

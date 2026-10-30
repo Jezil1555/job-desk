@@ -1,4 +1,5 @@
 // Calendar, Follow-ups, Search, Alerts, Settings and the modules planned for later phases.
+import { integrationsHtml } from "./integrations.js";
 import { esc, fmtDate, zonedDate, zonedTime, todayISO, addDays, weekdayOf, fmtDateTime, ago, DEFAULT_TZ } from "../util.js";
 import { isOpen, isOverdue, STATUS_LABEL } from "../logic.js";
 import { state, wsById, projectById, contactById, activeWorkspaces, canWrite, nameOf } from "../store.js";
@@ -162,11 +163,12 @@ export function renderSettings(view) {
   ${section("Invite people", `<p class="calm">Anyone with this link can create their own free account. To work together, add them to a workspace by email from that workspace's People button.</p>
     <div class="btnrow"><button class="btn primary" data-act="invite">Share invite link</button><button class="btn" data-act="copy-link">Copy link</button></div><p class="num small">${esc(location.origin)}</p>`)}
   ${section("Install on your phone", isStandalone() ? `<p class="calm">${ICON.done} Installed.</p>` : isIOS ? `<ol class="steps"><li>Open this page in Safari.</li><li>Tap Share.</li><li>Choose <b>Add to Home Screen</b>.</li></ol>` : `<ol class="steps"><li>Open in Chrome.</li><li>Tap ⋮.</li><li>Choose <b>Install app</b>.</li></ol>`)}
+  ${integrationsHtml()}
   ${section("Export & backup", `<p class="calm">Download everything you can access. Exports are generated from live data.</p>
     <div class="btnrow"><button class="btn" data-act="export-csv">${ICON.download}Tasks (CSV)</button><button class="btn" data-act="export-json">${ICON.download}Full backup (JSON)</button></div>
     <p class="hint">The database is also backed up daily by Supabase.</p>`)}
   ${section("Account", `<button class="btn" data-act="sign-out">Sign out</button>`)}
-  <p class="hint center">Job Desk · Phase 1 · <a href="https://github.com/Jezil1555/job-desk" target="_blank" rel="noopener">source</a></p>
+  <p class="hint center">Job Desk · <a href="https://github.com/Jezil1555/job-desk" target="_blank" rel="noopener">source</a></p>
   </div>`;
 }
 export async function handleSettingsChange(e) {

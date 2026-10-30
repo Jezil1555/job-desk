@@ -2,7 +2,10 @@
 import { esc, fmtDate, zonedDate, todayISO, addDays, daysFromToday, ago, fmtDateTime, relDay } from "../util.js";
 import { isOpen, isOverdue, dueInDays, followUpDue, attentionItems, sortTasks, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
 import { state, wsById, projectById, contactById, nameOf, shortName, activeWorkspaces } from "../store.js";
-import { habitChecklist, activeHabits } from "./goals.js";
+import { habitChecklist, activeHabits, doneSet } from "./goals.js";
+import { habitDueOn } from "../insights.js";
+import { dailyBriefing } from "../smart.js";
+import { fin } from "../finapi.js";
 import { ICON, taskRow, section, emptyState, wsDot, projectPill, statusPill, prioChip, avatar } from "../ui.js";
 
 export const HOME_SECTIONS = {
@@ -45,7 +48,7 @@ export function renderHome(view) {
   const first = (state.me.display_name || state.user.email.split("@")[0]).split(" ")[0];
 
   const parts = [];
-  parts.push(`<div class="page-head"><div><h1 class="h-display">${greet}, ${esc(first)}</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p></div>
+  parts.push(`<div class="page-head"><div><h1 class="h-display">${greet}, ${esc(first)}</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>${briefingHtml(today, now)}</div>
     <div class="filters">
       <select class="input sm" id="home-ws" aria-label="Workspace"><option value="">All workspaces</option>${activeWorkspaces().map(w => `<option value="${w.id}" ${w.id === wsFilter ? "selected" : ""}>${esc(w.name)}</option>`).join("")}</select>
       <select class="input sm" id="home-owner" aria-label="Owner"><option value="me" ${ownerFilter === "me" ? "selected" : ""}>Mine</option><option value="all" ${ownerFilter === "all" ? "selected" : ""}>Everyone</option></select>
@@ -166,4 +169,12 @@ export function actRow(a) {
   else if (a.entity_type === "milestone") label = "a milestone";
   else if (a.entity_type === "workspace") label = esc((wsById(a.entity_id) || {}).name || "a workspace");
   return `<li>${a.actor_id ? avatar(a.actor_id, "sm") : `<span class="av sm sys">·</span>`}<div><span>${esc(a.actor_id ? shortName(a.actor_id) : "System")} ${what} ${label}</span><time>${ago(a.created_at)}</time></div></li>`;
+}
+
+/* one-line briefing from stored records (rule-based; no AI) */
+function briefingHtml(today, now) {
+  const hd = activeHabits().filter(h => habitDueOn(h, today));
+  const billsDue = fin.invoices.filter(i => i.kind === "purchase" && i.status === "posted" && i.due_date && i.due_date <= addDays(today, 7) && (() => { const t = fin.totals.get(i.id); return t && Number(t.total) > Number(t.paid); })());
+  const b = dailyBriefing({ tasks: state.tasks, followUps: state.followUps, uid: state.user.id, tz: state.tz, now, habitsDue: hd.length, habitsDone: hd.filter(h => doneSet(h.id).has(today)).length, billsDue });
+  return `<p class="briefing">${esc(b.summary)}${b.focus ? ` <span class="hint">Start with</span> <button class="linkbtn" data-act="open-task" data-id="${b.focus.id}">${esc(b.focus.title)}</button>` : ""}</p>`;
 }

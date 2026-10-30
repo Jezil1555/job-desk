@@ -1,4 +1,5 @@
 // Finance & CFO screens. Every figure is calculated from posted ledger entries in that entity's own books.
+import { aiOn } from "../assist.js";
 import { esc, todayISO, addDays, fmtDate, ago } from "../util.js";
 import { state, nameOf, wsById } from "../store.js";
 import { ICON, emptyState, section } from "../ui.js";
@@ -187,15 +188,17 @@ function banking(e) {
   return `<div class="filters kfilters noprint"><select class="input" id="fb-acc">${accs.map(a => `<option value="${a.id}" ${a.id === acc.id ? "selected" : ""}>${esc(a.code + " " + a.name)}</option>`).join("")}</select>
     ${canWriteFin(e.id) ? `<label class="btn filebtn">${ICON.download}Import statement (CSV)<input type="file" accept=".csv,text/csv,text/plain" id="fb-file" hidden></label>` : ""}</div>
   <div class="tiles">${tile(M(book, e), "Balance in your books")}${tile(open.length, "Statement lines to match", open.length ? "warn" : "")}${tile(unmatchedBook.length, "Book entries not on a statement")}${tile(done.length, "Matched / ignored")}</div>
+  ${open.length && canWriteFin(e.id) && aiOn() ? `<div class="btnrow noprint"><button class="btn" data-act="fin-ai-cat" id="finAiCat">✨ Suggest accounts for unmatched lines</button><small class="hint">Sends the line descriptions and amounts plus your account names to the AI. Suggestions only — you post each entry yourself.</small></div>` : ""}
   ${open.length ? section("To reconcile", `<div class="list">${open.map(s => stmtRow(s, e, unmatchedBook)).join("")}</div>`, { count: open.length }) :
     `<p class="calm">${stm.length ? `${ICON.done} Every imported line is matched or ignored.` : "Import a CSV statement from your bank to reconcile this account. Columns needed: Date and either Amount or Debit/Credit."}</p>`}
   ${done.length ? section("Reconciled", `<div class="list compact">${done.slice(0, 40).map(s => `<div class="trow"><div class="tmain"><div class="ttitle">${esc(s.description)}</div><div class="tmeta">${fmtDate(s.line_date)}${s.reference ? " · " + esc(s.reference) : ""} · ${s.status}</div></div>
     <div class="tside"><b class="num ${s.amount < 0 ? "bad-text" : "ok-text"}">${M(s.amount, e)}</b>${canWriteFin(e.id) ? `<button class="btn sm" data-act="fin-unmatch" data-id="${s.id}">${s.status === "ignored" ? "Restore" : "Unmatch"}</button>` : ""}</div></div>`).join("")}</div>`, { count: done.length }) : ""}`;
 }
 function stmtRow(s, e, bookLines) {
-  const cands = matchCandidates(s, bookLines).slice(0, 3), w = canWriteFin(e.id);
+  const cands = matchCandidates(s, bookLines).slice(0, 3), w = canWriteFin(e.id), sug = !cands.length && (ui().suggest || {})[s.id];
   return `<div class="trow stmt"><div class="tmain"><div class="ttitle">${esc(s.description)}</div><div class="tmeta">${fmtDate(s.line_date)}${s.reference ? " · " + esc(s.reference) : ""}</div>
     ${w ? `<div class="btnrow">${cands.map(c => `<button class="btn sm primary" data-act="fin-match" data-st="${s.id}" data-line="${c.line.id}">Match: #${c.line.journal.number} ${esc(c.line.journal.memo.slice(0, 40))} (${fmtDate(c.line.entry_date)})</button>`).join("")}
+      ${sug ? `<button class="btn sm" data-act="fin-stmt-entry" data-id="${s.id}" data-acc="${sug.account_id}" title="AI suggestion (${sug.confidence} confidence)">✨ ${esc((accById(sug.account_id) || {}).code + " " + (accById(sug.account_id) || {}).name)}</button>` : ""}
       <button class="btn sm" data-act="fin-stmt-entry" data-id="${s.id}">Create entry</button><button class="btn sm" data-act="fin-ignore" data-id="${s.id}">Ignore</button></div>` : ""}</div>
     <div class="tside"><b class="num ${s.amount < 0 ? "bad-text" : "ok-text"}">${M(s.amount, e)}</b></div></div>`;
 }

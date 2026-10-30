@@ -137,7 +137,8 @@ function renderFollowUp(sh) {
     ${w ? `<div class="sheet-foot"><button class="btn primary" type="submit" id="fuSave">${f.id ? "Save" : "Create follow-up"}</button>
       ${f.id && ["open", "escalated"].includes(x.status) ? `<button type="button" class="btn" data-act="fu-close" data-id="${x.id}">${ICON.check}Close (resolved)</button>` : ""}
       ${f.id && ["closed", "cancelled"].includes(x.status) ? `<button type="button" class="btn" data-act="fu-reopen" data-id="${x.id}">Reopen</button>` : ""}
-      ${f.id && x.status === "open" ? `<button type="button" class="btn" data-act="fu-escalate" data-id="${x.id}">Escalate now</button>` : ""}</div>` : ""}
+      ${f.id && x.status === "open" ? `<button type="button" class="btn" data-act="fu-escalate" data-id="${x.id}">Escalate now</button>` : ""}
+      ${f.id && ["open", "escalated"].includes(x.status) ? `<button type="button" class="btn" data-act="draft-msg" data-kind="followup" data-id="${x.id}">✉ Draft message</button>` : ""}</div>` : ""}
   </form>
   ${f.id ? `<section class="sh-body sub"><div class="sub-h"><h3>Communication log</h3></div>
     ${w ? `<form class="upform" id="fuLogForm"><textarea class="input" id="fuLogInput" rows="2" placeholder="What happened? e.g. Called, promised reply by Sunday"></textarea>

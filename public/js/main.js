@@ -5,7 +5,7 @@ import { state, on, emit, activeWorkspaces } from "./store.js";
 import { sb, loadAll, subscribe, unsubscribe, run } from "./api.js";
 import { ICON, $, toast, toastError, closeSheet, closeAllSheets, sheetOpen, dialog } from "./ui.js";
 import { openTask, handleTaskChange, handleTaskInput, handleTaskClick, handleTaskSubmit, handleContactSelect, clearTaskSheet } from "./sheets/task.js";
-import { openCapture, handleCaptureChange, handleCaptureClick, handleCaptureSubmit } from "./sheets/capture.js";
+import { openCapture, handleCaptureChange, handleCaptureClick, handleCaptureSubmit, handleCaptureInput } from "./sheets/capture.js";
 import { openProjectForm, openMilestoneForm, openFollowUp, openWorkspaceForm, openContactForm, handleFormSubmit, handleFormClick, handleFormChange } from "./sheets/forms.js";
 import { renderHome } from "./views/home.js";
 import { renderNotes, handleNotesChange, handleNotesInput, NOTE_TABS } from "./views/notes.js";
@@ -14,6 +14,8 @@ import { renderReports, handleReportsClick, handleReportsChange, handleReportsSu
 import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
 import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
 import { loadFin, fin } from "./finapi.js";
+import { openDraft, handleAssistClick, handleAssistChange } from "./sheets/assist.js";
+import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integrations.js";
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
@@ -135,6 +137,9 @@ document.addEventListener("click", async e => {
   if (await handleGoalsClick(act, el, rerender)) return;
   if (await handleReportsClick(act, el, rerender)) return;
   if (await handleFinClick(act, el, rerender)) return;
+  if (await handleAssistClick(act, el)) return;
+  if (await handleIntegrationsClick(act, el)) return;
+  if (act === "draft-msg") { openDraft(el.dataset.kind, el.dataset.id); return; }
   const id = el.dataset.id;
   switch (act) {
     case "close-sheet": closeSheet(); if (!sheetOpen()) clearTaskSheet(); break;
@@ -182,6 +187,8 @@ document.addEventListener("change", async e => {
   if (handleGoalsChange(e, rerender)) return;
   if (handleReportsChange(e, rerender)) return;
   if (await handleFinChange(e, rerender)) return;
+  if (handleAssistChange(e)) return;
+  if (await handleIntegrationsChange(e)) return;
   const id = e.target.id;
   if (id === "home-ws") { state.ui.homeWs = e.target.value; render(); }
   if (id === "home-owner") { state.ui.homeOwner = e.target.value; render(); }
@@ -193,6 +200,7 @@ const searchDebounced = debounce(q => runSearch(q), 250);
 const listDebounced = debounce(() => { const pos = $("tl-search") && $("tl-search").selectionStart; render(); const i = $("tl-search"); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (err) {} } }, 200);
 document.addEventListener("input", e => {
   handleTaskInput(e);
+  if (handleCaptureInput(e)) return;
   if (handleKnowledgeInput(e)) return;
   if (handleNotesInput(e, keepFocus)) return;
   if (handleFinInput(e, keepFocus)) return;
@@ -220,7 +228,7 @@ window.addEventListener("offline", () => { $("offline").hidden = false; });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.user && state.loaded && Date.now() - (state.loadedAt || 0) > 30000) { loadAll().catch(() => {}); loadFin(true); } });
 on("data", () => { if (state.user) { if (!sheetOpen() || !document.activeElement || !document.activeElement.closest("#view")) render(); else renderNav(); } });
 on("notifications", () => renderNav());
-on("fin", () => { if (!state.user) return; if (state.route.name === "finance") render(); /* the view sits under any open sheet, so it is safe to refresh */ });
+on("fin", () => { if (!state.user) return; if (state.route.name === "finance" || (state.route.name === "home" && !sheetOpen())) render(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "open" && e.data.url) location.hash = e.data.url.replace(/^\/?#?/, "#"); });
 setInterval(() => { if (state.loaded && !sheetOpen() && ["home", "tasks"].includes(state.route.name)) render(); }, 60000);
 

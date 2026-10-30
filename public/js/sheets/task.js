@@ -121,7 +121,7 @@ function readinessBanner(t) {
   const pre = openPrerequisites(t, state.deps, state.taskById), late = overduePrerequisites(t, state.deps, state.taskById);
   const parts = [];
   if (pre.length) parts.push(`<div class="banner ${late.length ? "bad" : "warn"}">${ICON.lock} Not ready: waiting on ${pre.length} prerequisite task${pre.length > 1 ? "s" : ""}${late.length ? `, ${late.length} of them overdue` : ""}. <button class="linkbtn" data-act="task-tab" data-tab="plan">See dependencies</button></div>`);
-  if (t.status === "waiting") parts.push(`<div class="banner info">${ICON.clock} Waiting on <b>${esc(t.waiting_on || (contactById(t.waiting_on_contact_id) || {}).name || "someone")}</b>${t.waiting_for ? ` for ${esc(t.waiting_for)}` : ""}${t.follow_up_at ? ` · follow up ${fmtDateTime(t.follow_up_at, state.tz)}` : ` · <span class="warn-text">no follow-up date set</span>`}</div>`);
+  if (t.status === "waiting") parts.push(`<div class="banner info">${ICON.clock} Waiting on <b>${esc(t.waiting_on || (contactById(t.waiting_on_contact_id) || {}).name || "someone")}</b>${t.waiting_for ? ` for ${esc(t.waiting_for)}` : ""}${t.follow_up_at ? ` · follow up ${fmtDateTime(t.follow_up_at, state.tz)}` : ` · <span class="warn-text">no follow-up date set</span>`}${canWrite(t.workspace_id) ? ` <button class="btn sm" data-act="draft-msg" data-kind="task" data-id="${t.id}">✉ Draft a chase message</button>` : ""}</div>`);
   if (t.status === "blocked") parts.push(`<div class="banner bad">${ICON.alert} Blocked: ${esc(t.blocker || "")}${t.unblock_action ? ` · next: ${esc(t.unblock_action)}` : ""}</div>`);
   return parts.join("");
 }

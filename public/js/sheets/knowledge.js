@@ -4,6 +4,7 @@ import { esc, todayISO, fmtDate, fmtDateTime, ago } from "../util.js";
 import { extractActionItems, fmtBytes, safeFileName } from "../insights.js";
 import { state, wsById, projectById, contactById, followUpById, noteById, docById, canWrite, activeWorkspaces, membersOf, nameOf, shortName } from "../store.js";
 import { sb, run, linksFor, addLink, removeLink, uploadDocument, documentUrl, deleteDocument, createTask, loadAll } from "../api.js";
+import { aiOn, aiCall } from "../assist.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, busy } from "../ui.js";
 
 export const NOTE_KIND = { note: "Note", meeting: "Meeting notes", decision: "Decision" };
@@ -60,7 +61,7 @@ function renderNote(sh) {
       <textarea class="input notebody" id="nf-body" rows="${n.kind === "note" ? 12 : 9}" ${ro}>${esc(n.body || "")}</textarea></label>
     <label class="field"><span>Tags <small>(comma separated)</small></span><input class="input" id="nf-tags" value="${esc((n.tags || []).join(", "))}" placeholder="e.g. customs, ksa, supplier" ${ro}></label>
     ${w ? `<div class="sheet-foot"><button class="btn primary" type="submit" id="nfSave">${isNew ? "Save" : "Save changes"}</button>
-      ${!isNew && n.kind === "meeting" ? `<button type="button" class="btn" data-act="note-actions">${ICON.tasks}Create tasks from action items</button>` : ""}
+      ${!isNew && n.kind === "meeting" ? `<button type="button" class="btn" data-act="note-actions">${ICON.tasks}Create tasks from action items</button>${aiOn() ? `<button type="button" class="btn" data-act="note-actions-ai" id="nfAi">✨ Suggest with AI</button>` : ""}` : ""}
       ${!isNew ? `<button type="button" class="btn" data-act="note-pin">${n.pinned ? "Unpin" : "Pin"}</button><button type="button" class="btn danger" data-act="note-delete">${ICON.trash}Delete</button>` : ""}</div>` : ""}
   </form>
   ${k.actions ? actionsPanel(n) : ""}
@@ -85,7 +86,7 @@ function linkLabel(x) {
 function actionsPanel(n) {
   const mem = membersOf(n.workspace_id);
   return `<section class="sh-body sub actions-review"><div class="sub-h"><h3>Proposed tasks from this meeting</h3><span class="c">${k.actions.length}</span></div>
-    ${k.actions.length ? `<p class="hint">Review before creating. Nothing is created until you confirm. No deadlines are added — set them on each task when you commit.</p>
+    ${k.actions.length ? `<p class="hint">${k.aiSource ? "Suggested by AI from your notes — check each one. " : ""}Review before creating. Nothing is created until you confirm. No deadlines are added — set them on each task when you commit.</p>
     <ul class="crit">${k.actions.map((a, i) => `<li><label><input type="checkbox" data-act="ai-toggle" data-i="${i}" ${a.on ? "checked" : ""}> <input class="input sm" id="ai-title-${i}" value="${esc(a.title)}" style="flex:1"></label>
       <select class="input sm" id="ai-owner-${i}">${mem.map(m => `<option value="${m.user_id}" ${m.user_id === a.owner_id ? "selected" : ""}>${esc(nameOf(m.user_id))}</option>`).join("")}</select></li>`).join("")}</ul>
     <div class="btnrow"><button class="btn primary" data-act="ai-create">Create ${k.actions.filter(a => a.on).length} task(s)</button><button class="btn" data-act="ai-cancel">Cancel</button></div>`
@@ -230,13 +231,26 @@ export async function handleKnowledgeClick(act, el) {
       const r = await run(sb.from("notes").update({ deleted_at: new Date().toISOString() }).eq("id", n.id)); if (r.error) return toastError(r.error), true;
       state.notes = state.notes.filter(x => x.id !== n.id); closeSheet(); toast("Note deleted"); return true;
     }
-    case "note-actions": {
+    case "note-actions": { k.aiSource = false;
       const n = noteById(k.noteId); const body = $("nf-body") ? $("nf-body").value : n.body;
       k.actions = extractActionItems(body).map(a => {
         const m = a.owner_hint && membersOf(n.workspace_id).find(x => nameOf(x.user_id).toLowerCase().startsWith(a.owner_hint.toLowerCase()));
         return { title: a.title.replace(/@\S+/g, "").trim() || a.title, owner_id: m ? m.user_id : state.user.id, on: true };
       });
       rerenderSheet(); return true;
+    }
+    case "note-actions-ai": {
+      const n = noteById(k.noteId), body = $("nf-body") ? $("nf-body").value : n.body;
+      if (!body.trim()) return toastError("Write some notes first."), true;
+      const btn = $("nfAi"); busy(btn, true, "Reading notes…");
+      const r = await aiCall("action_items", { notes: body, people: membersOf(n.workspace_id).map(m => nameOf(m.user_id)) });
+      busy(btn, false);
+      if (r.error) return toastError(r.error), true;
+      k.actions = r.data.items.map(a => {
+        const m = a.owner && membersOf(n.workspace_id).find(x => nameOf(x.user_id).toLowerCase().startsWith(a.owner.toLowerCase().split(" ")[0]));
+        return { title: a.title, owner_id: m ? m.user_id : state.user.id, on: true };
+      });
+      k.aiSource = true; rerenderSheet(); return true;
     }
     case "ai-toggle": k.actions[+el.dataset.i].on = el.checked; return true;
     case "ai-cancel": k.actions = null; rerenderSheet(); return true;

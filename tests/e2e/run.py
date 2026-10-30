@@ -82,6 +82,7 @@ def fresh_db():
 
 DB = fresh_db()
 REQUESTS = []
+AI_CALLS = []
 STORAGE = {}
 
 def health():
@@ -125,12 +126,27 @@ def handle(route):
     if path == "/storage/v1/object/documents" and req.method == "DELETE":
         for k in json.loads(req.post_data or "{}").get("prefixes", []): STORAGE.pop(k, None)
         return reply([])
+    if path.startswith("/functions/v1/assistant"):
+        body = json.loads(req.post_data or "{}"); AI_CALLS.append(body.get("action"))
+        prof = next(p for p in DB["profiles"] if p["id"] == ME); on = bool((prof.get("prefs") or {}).get("ai_enabled"))
+        if body.get("action") == "status": return reply({"configured": True, "enabled": on, "used_24h": len(AI_CALLS) - 1, "limit": 60, "model": "claude-sonnet-5-5"})
+        if not on: return reply({"error": "Turn on the AI assistant in Settings first."}, 403)
+        a, inp = body["action"], body.get("input") or {}
+        if a == "action_items": return reply({"items": [{"title": "Confirm inspection slot with surveyor", "owner": "Adil"}, {"title": "Share revised PO", "owner": None}]})
+        if a == "draft_message": return reply({"text": "Hi Rashid, AI-polished: please confirm the dispatch date today."})
+        if a == "weekly_narrative": return reply({"text": "This week I closed out the Kite BOM material readiness."})
+        if a == "categorize": return reply({"suggestions": [{"id": l["id"], "account_id": next(x["id"] for x in inp["accounts"] if x["code"] == "6900"), "confidence": "medium"} for l in inp["lines"]]})
+        return reply({"error": "Unknown action."}, 400)
     if path.startswith("/rest/v1/rpc/"):
         fn = path.rsplit("/", 1)[1]; body = json.loads(req.post_data or "{}")
         if fn == "search_all":
             q = body.get("q", "").lower()
             return reply([{"kind": "task", "id": t["id"], "title": t["title"], "subtitle": "", "workspace_id": t["workspace_id"]} for t in DB["tasks"] if q in t["title"].lower()] +
                          [{"kind": "note", "id": n["id"], "title": n["title"], "subtitle": "", "workspace_id": n["workspace_id"]} for n in DB["notes"] if q in (n["title"] + " " + (n["body"] or "")).lower()])
+        if fn == "create_calendar_feed":
+            DB.setdefault("calendar_feeds", [])[:] = [{"user_id": ME, "include_finance": body.get("p_include_finance", False), "created_at": iso(now), "last_used_at": None}]
+            return reply("ab" * 32)
+        if fn == "revoke_calendar_feed": DB["calendar_feeds"] = []; return reply(None)
         if fn.startswith("fin_"):
             try: return reply(fin_rpc(fn, body))
             except FinError as e: return err(str(e))
@@ -559,6 +575,56 @@ with sync_playwright() as pw:
     check("budget saved separately from actuals", any(b["account_id"] == f"{FE1[:8]}-acc-6000" and b["amount"] == 1000 for b in DB["fin_budgets"]))
     page.goto(BASE + f"/#/finance/{FE1}/overview"); page.wait_for_selector(".tiles")
     shot(page, "16-finance-overview", True)
+
+    # ---------- Phase 4: smart capture, briefing, drafts, calendar link, AI (simulated) ----------
+    page.goto(BASE + "/#/home"); page.wait_for_selector(".briefing")
+    check("Command Centre opens with a briefing from stored records", "overdue" in page.inner_text(".briefing") or "Nothing overdue" in page.inner_text(".briefing"), page.inner_text(".briefing"))
+    page.keyboard.press("n"); page.wait_for_selector("#capForm")
+    page.fill("#cap-title", "Chase Al Muthawa dispatch fri 10am #dlusso !high"); page.wait_for_timeout(150)
+    chips = page.inner_text("#cap-chips")
+    check("capture recognises date, workspace and priority as chips", "Due:" in chips and "D'Lusso" in chips and "High" in chips, chips)
+    page.click('[data-act="cap-chip-off"][data-k="due"]'); page.wait_for_timeout(100)
+    check("removing a chip keeps that text as plain words", "Due:" not in page.inner_text("#cap-chips"))
+    page.click("#capSave"); page.wait_for_selector("text=Capture another")
+    sm = next((t for t in DB["tasks"] if t["title"].startswith("Chase Al Muthawa")), None)
+    check("saved with workspace and priority from the line, no date (chip removed)", sm and sm["workspace_id"] == WS[0] and sm["priority"] == "high" and sm["due_at"] is None and sm["title"] == "Chase Al Muthawa dispatch fri 10am", str(sm and (sm["title"], sm["due_at"])))
+    page.click("text=Capture another"); page.fill("#cap-title", "Call clearing agent tomorrow 3pm @adil #qcloud"); page.wait_for_timeout(100); page.click("#capSave"); page.wait_for_selector("text=Capture another")
+    sm2 = next((t for t in DB["tasks"] if t["title"] == "Call clearing agent"), None)
+    tmr = (dt.date.fromisoformat(today_qa()) + dt.timedelta(days=1)).isoformat()
+    check("'tomorrow 3pm' stored as 15:00 Doha tomorrow, owner Adil", sm2 and sm2["due_at"].startswith(tmr + "T12:00") and sm2["owner_id"] == ADIL, str(sm2 and (sm2["due_at"], sm2["owner_id"])))
+    page.keyboard.press("Escape")
+    # message draft for a follow-up — nothing sent automatically
+    page.goto(BASE + "/#/followups"); page.wait_for_selector('[data-act="open-followup"][data-id="f-1"]'); page.click('[data-act="open-followup"][data-id="f-1"]'); page.wait_for_selector("#fuForm")
+    page.click('[data-act="draft-msg"]'); page.wait_for_selector("#dr-text")
+    check("draft message is written from the follow-up's facts", "Revised dispatch date" in page.input_value("#dr-text") or "revised dispatch date" in page.input_value("#dr-text").lower())
+    check("without AI turned on there is no AI button", page.locator('[data-act="dr-ai"]').count() == 0)
+    page.select_option("#dr-tone", "firm"); page.wait_for_timeout(100)
+    check("firm tone changes the draft", "holding up" in page.input_value("#dr-text"))
+    logs_before = len(DB["follow_up_logs"])
+    check("opening the draft sends nothing and logs nothing", len(DB["follow_up_logs"]) == logs_before)
+    page.click('[data-act="dr-log"]'); page.wait_for_timeout(500)
+    check("'I sent it' logs the contact on the follow-up", any(l["body"].startswith("Sent by WhatsApp") for l in DB["follow_up_logs"]))
+    # calendar link
+    page.goto(BASE + "/#/settings"); page.wait_for_selector("#ig-cal")
+    page.wait_for_selector('[data-act="ig-cal-new"]'); page.click('[data-act="ig-cal-new"]'); page.wait_for_selector("#ig-url")
+    check("calendar link shown once with the private token", page.input_value("#ig-url").endswith("/functions/v1/calendar-feed?token=" + "ab" * 32))
+    check("Apple Calendar subscribe link offered", page.locator('a[href^="webcal:"]').count() == 1)
+    # AI on
+    page.check("#ig-ai-on"); page.wait_for_timeout(600)
+    check("AI assistant opt-in saved to profile", (next(p for p in DB["profiles"] if p["id"] == ME)["prefs"] or {}).get("ai_enabled") is True)
+    check("Settings shows AI ready with usage", "Ready" in page.inner_text("#ig-ai"), page.inner_text("#ig-ai"))
+    page.goto(BASE + "/#/notes/meetings"); page.wait_for_selector(".note-row"); page.click(".note-row"); page.wait_for_selector("#nfAi")
+    calls = len(AI_CALLS); page.click("#nfAi"); page.wait_for_selector(".actions-review")
+    check("AI action items arrive as suggestions for review (nothing created yet)", "Suggested by AI" in page.inner_text(".actions-review") and page.locator(".actions-review li").count() == 2 and len(AI_CALLS) == calls + 1)
+    check("AI owner name matched to the workspace member", page.input_value("#ai-owner-0") == ADIL)
+    page.keyboard.press("Escape")
+    page.goto(BASE + "/#/reports/weekly"); page.wait_for_selector("#rvAi"); page.click("#rvAi"); page.wait_for_timeout(400)
+    check("AI weekly summary is placed in the notes box, not saved", "Kite BOM" in page.input_value("#rv-notes") and not any("Kite BOM material readiness" in (r.get("notes") or "") for r in DB["weekly_reviews"]))
+    page.goto(BASE + f"/#/finance/{FE1}/banking"); page.wait_for_selector("#finAiCat"); page.click("#finAiCat"); page.wait_for_timeout(500)
+    check("AI bank-line suggestion shown as a button (nothing posted)", page.locator('[data-act="fin-stmt-entry"][data-acc]').count() >= 1 and not any(j["memo"] == "BANK CHARGE" for j in DB["fin_journals"]))
+    page.click('[data-act="fin-stmt-entry"][data-acc]'); page.wait_for_selector("#finStmtEntry")
+    check("suggested account is pre-selected for review", page.input_value("#fse-acc") == f"{FE1[:8]}-acc-6900")
+    page.keyboard.press("Escape")
 
     # Settings: hide a dashboard section persists to profile prefs
     page.goto(BASE + "/#/settings"); page.wait_for_selector(".settings")

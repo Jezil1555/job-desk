@@ -1,10 +1,10 @@
 // Job Desk service worker: offline app shell + phone push notifications.
-const CACHE = "jobdesk-v5";
+const CACHE = "jobdesk-v6";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/config.js", "/manifest.webmanifest",
-  "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/api.js", "/js/store.js", "/js/ui.js",
-  "/js/sheets/task.js", "/js/sheets/capture.js", "/js/sheets/forms.js", "/js/sheets/knowledge.js", "/js/sheets/finforms.js",
-  "/js/views/home.js", "/js/views/tasks.js", "/js/views/workspaces.js", "/js/views/other.js", "/js/views/notes.js", "/js/views/goals.js", "/js/views/reports.js", "/js/views/finance.js",
+  "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/smart.js", "/js/assist.js", "/js/api.js", "/js/store.js", "/js/ui.js",
+  "/js/sheets/task.js", "/js/sheets/capture.js", "/js/sheets/forms.js", "/js/sheets/knowledge.js", "/js/sheets/finforms.js", "/js/sheets/assist.js",
+  "/js/views/home.js", "/js/views/tasks.js", "/js/views/workspaces.js", "/js/views/other.js", "/js/views/notes.js", "/js/views/goals.js", "/js/views/reports.js", "/js/views/finance.js", "/js/views/integrations.js",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
 ];

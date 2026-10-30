@@ -6,6 +6,7 @@ import { createTask, savePrefs, uploadDocument, addLink } from "../api.js";
 import { safeFileName } from "../insights.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, busy } from "../ui.js";
 import { openTask } from "./task.js";
+import { parseCapture } from "../smart.js";
 
 const cap = { draft: null, saved: null };
 
@@ -14,7 +15,7 @@ function defaults(over = {}) {
   const writable = activeWorkspaces().filter(w => canWrite(w.id));
   const wsId = writable.some(w => w.id === ws) ? ws : (writable[0] || {}).id;
   return { title: "", description: "", workspace_id: wsId, project_id: over.project_id || null, parent_id: null, priority: "medium", status: "inbox",
-           due_d: "", due_t: "", fu_d: "", fu_t: "", owner_id: state.user.id, more: false, ...over };
+           due_d: "", due_t: "", fu_d: "", fu_t: "", owner_id: state.user.id, more: false, off: new Set(), ...over };
 }
 
 export function openCapture(over = {}) {
@@ -37,7 +38,8 @@ function render(sh) {
   const mem = membersOf(d.workspace_id);
   sh.innerHTML = sheetHead("Quick capture", "Capture now, classify later. Nothing is scheduled unless you add a date.") + `
   <form id="capForm" class="sh-body" novalidate>
-    <label class="field"><span>What needs attention?</span><textarea class="input big" id="cap-title" rows="2" autofocus placeholder="e.g. Follow up with supplier on delayed shipment">${esc(d.title)}</textarea></label>
+    <label class="field"><span>What needs attention?</span><textarea class="input big" id="cap-title" rows="2" autofocus placeholder="e.g. Chase Al Muthawa for dispatch date fri 10am #qcloud !high">${esc(d.title)}</textarea></label>
+    <div id="cap-chips" class="chips cap-chips" aria-live="polite">${chipsHtml()}</div>
     <div class="seg2" role="radiogroup" aria-label="Capture as">
       <label class="${d.status === "inbox" ? "on" : ""}"><input type="radio" name="cap-status" value="inbox" ${d.status === "inbox" ? "checked" : ""}><b>Inbox</b><small>Sort it out later</small></label>
       <label class="${d.status === "not_started" ? "on" : ""}"><input type="radio" name="cap-status" value="not_started" ${d.status === "not_started" ? "checked" : ""}><b>Ready to work</b><small>Add straight to my tasks</small></label>
@@ -63,6 +65,25 @@ function render(sh) {
   </form>`;
 }
 
+/** What the typed line means: parsed twice so @owner is matched against the chosen workspace's members. */
+export function parsed(d = cap.draft) {
+  const wsList = activeWorkspaces().filter(w => canWrite(w.id)).map(w => ({ id: w.id, name: w.name }));
+  const base = { today: todayISO(state.tz), workspaces: wsList, disabled: d.off };
+  const first = parseCapture(d.title, { ...base, members: [] });
+  const ws = first.workspace_id || d.workspace_id;
+  return parseCapture(d.title, { ...base, members: membersOf(ws).map(m => ({ user_id: m.user_id, name: nameOf(m.user_id) })) });
+}
+function chipsHtml() {
+  const p = parsed();
+  if (!p.chips.length) return `<small class="hint">Tip: type dates and tags right in the line — <i>tomorrow 3pm</i>, <i>by 5 nov</i>, <i>follow up mon</i>, <i>#qcloud</i>, <i>@adil</i>, <i>!high</i>.</small>`;
+  return p.chips.map(c => `<span class="chip on">${esc(c.label)}<button type="button" data-act="cap-chip-off" data-k="${c.kind}" aria-label="Don't use ${esc(c.label)}">${ICON.close}</button></span>`).join("") + `<small class="hint">Recognised from what you typed — tap ✕ to keep it as plain text.</small>`;
+}
+export function handleCaptureInput(e) {
+  if (e.target.id !== "cap-title" || !cap.draft) return false;
+  cap.draft.title = e.target.value; if (!e.target.value.trim()) cap.draft.off = new Set();
+  const box = $("cap-chips"); if (box) box.innerHTML = chipsHtml();
+  return true;
+}
 function sync() {
   const d = cap.draft; if (!$("cap-title")) return;
   d.title = $("cap-title").value; d.workspace_id = $("cap-ws").value; d.priority = $("cap-priority").value;
@@ -84,6 +105,7 @@ export function handleCaptureChange(e) {
 }
 
 export async function handleCaptureClick(act, el) {
+  if (act === "cap-chip-off") { sync(); cap.draft.off.add(el.dataset.k); const box = $("cap-chips"); if (box) box.innerHTML = chipsHtml(); $("cap-title").focus(); return true; }
   if (act === "cap-more") { sync(); cap.draft.more = !cap.draft.more; rerenderSheet(); return true; }
   if (act === "cap-quick") {
     sync(); const f = el.dataset.f, n = el.dataset.n;
@@ -101,6 +123,14 @@ export async function handleCaptureSubmit(form) {
   sync();
   const d = cap.draft;
   if (!d.title.trim()) { toastError("Give the task a title."); $("cap-title").focus(); return true; }
+  // apply what was recognised in the typed line; values set explicitly in the form win
+  const p = parsed(d);
+  if (p.title) d.title = p.title;
+  if (p.workspace_id) d.workspace_id = p.workspace_id;
+  if (p.priority) d.priority = p.priority;
+  if (p.owner_id && membersOf(d.workspace_id).some(m => m.user_id === p.owner_id)) d.owner_id = p.owner_id;
+  if (p.due_d && !d.due_d) { d.due_d = p.due_d; d.due_t = p.due_t || ""; }
+  if (p.fu_d && !d.fu_d) { d.fu_d = p.fu_d; d.fu_t = p.fu_t || ""; }
   const btn = $("capSave");
   if (btn.disabled) return true; // duplicate-submission guard
   busy(btn, true);

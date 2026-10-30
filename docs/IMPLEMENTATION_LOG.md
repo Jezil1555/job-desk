@@ -69,3 +69,26 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 - No tax/VAT/GST engine yet (Qatar has no VAT; India GST for The Burgery would be a later addition).
 - Average cost uses all movements to date (not date-sensitive back-dating).
 - Recurring bills and earmarked-fund rules are not automated yet.
+
+
+## 2026-10-30 — Phase 4 (AI & integrations)
+
+### Changes
+- **Smart Quick Capture** (`public/js/smart.js`): dates/times/follow-up/#workspace/@owner/!priority parsed into removable chips; form values win; nothing invented.
+- **Daily briefing** line on the Command Centre (rule-based).
+- **Message drafts** for follow-ups and waiting tasks: polite/firm templates, open in WhatsApp or email, copy, "I sent it — log it".
+- **Calendar link**: migration `20261030130000_phase4_calendar_ai.sql` (`calendar_feeds` with hashed tokens, `create_calendar_feed`, `revoke_calendar_feed`, service-role-only `calendar_feed_events`); edge function `calendar-feed` (iCal, verify_jwt off — the token is the credential); Settings card with Apple/Google instructions.
+- **AI assistant**: edge function `assistant` (verify_jwt on, opt-in per user, daily limit, usage log `ai_usage` without content). Actions: rewrite a message, suggest meeting action items, draft the weekly review notes, suggest accounts for unmatched bank lines — all review-only.
+- **Push reliability**: `20261030140000_push_timeout.sql` raises the database→push-function timeout from 8 s to 30 s (one push this morning timed out on a cold start).
+- Service worker cache → `jobdesk-v6`.
+
+### Verification
+- Unit tests: `npm test` → 58/58 (adds 9 capture/briefing/draft, 2 iCal, 3 assistant prompt/validation/request tests — no network).
+- Database tests: `supabase/tests/phase4_tests.sql` → 17/17 on the live project, rolled back (token hashing, own-row visibility, no direct writes, feed contents and exclusions, other users' items never included, bills only when chosen, new link revokes old, turn-off revokes, signed-in users can't read feeds by token, signed-out can't create links, usage log not writable).
+- Live functions: `calendar-feed` returns 404 for unknown/ malformed tokens (exercises the service-role RPC path); `assistant` rejects requests without a session (401).
+- End-to-end UI: `python3 tests/e2e/run.py` → 118/118 (adds 19: briefing, capture chips and chip removal, "tomorrow 3pm @adil" stored correctly, drafts send nothing until logged, calendar link shown once, AI opt-in, AI suggestions for action items / weekly notes / bank lines only populate review UI).
+- Security advisor: no new findings beyond the intentional signed-in RPCs.
+
+### Needs from the owner
+- AI: add `ANTHROPIC_API_KEY` under Supabase → Edge Functions → Secrets, then turn it on in Settings. Until then AI buttons stay hidden and everything else works.
+- Not verified: a live AI call (no key yet) and a calendar app subscribing to a real link (the sandbox can't reach Supabase; the iCal output is unit-tested).

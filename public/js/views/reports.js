@@ -1,4 +1,5 @@
 // Reports & Insights — every number here is counted from stored records; nothing is estimated.
+import { aiOn, aiCall } from "../assist.js";
 import { esc, todayISO, addDays, fmtDate, fmtDateTime, zonedDate } from "../util.js";
 import { isOpen, isOverdue, dueInDays, followUpDue, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
 import { weeklyReport, ownerWorkload, milestoneReport, toCSV, weekStartOf, habitRate, habitDueOn } from "../insights.js";
@@ -91,7 +92,7 @@ function weekly() {
     <label class="field"><span>Wins</span><textarea class="input" id="rv-wins" rows="3">${esc((saved || {}).wins || "")}</textarea></label>
     <label class="field"><span>Issues & lessons</span><textarea class="input" id="rv-issues" rows="3">${esc((saved || {}).issues || "")}</textarea></label>
     <label class="field"><span>Top priorities next week</span><textarea class="input" id="rv-prio" rows="3">${esc((saved || {}).priorities || "")}</textarea></label>
-    <label class="field"><span>Notes</span><textarea class="input" id="rv-notes" rows="2">${esc((saved || {}).notes || "")}</textarea></label>
+    <label class="field"><span>Notes ${aiOn() ? `<button type="button" class="linkbtn" data-act="rep-ai" id="rvAi">✨ Draft a summary with AI</button>` : ""}</span><textarea class="input" id="rv-notes" rows="${aiOn() ? 5 : 2}">${esc((saved || {}).notes || "")}</textarea></label>
     <div class="btnrow noprint"><button class="btn primary" type="submit" id="rvSave">${saved ? "Update review" : "Save review"}</button>${saved ? `<small class="hint">Saved ${fmtDateTime(saved.updated_at, state.tz)} · private to you</small>` : `<small class="hint">Private to you. Saves this week's numbers with it.</small>`}</div></form>`)}
   ${state.reviews.length ? section("Past reviews", `<ul class="plain">${state.reviews.slice(0, 12).map(x => `<li><button class="linkbtn" data-act="rep-week" data-d="${x.week_start}">${fmtDate(x.week_start)}</button> — ${x.snapshot && x.snapshot.completed !== undefined ? `${x.snapshot.completed} completed, ${x.snapshot.carried} slipped` : ""}</li>`).join("")}</ul>`, { cls: "noprint" }) : ""}`;
 }
@@ -136,6 +137,15 @@ export async function handleReportsClick(act, el, rerender) {
   const stamp = todayISO(state.tz);
   switch (act) {
     case "rep-print": window.print(); return true;
+    case "rep-ai": {
+      const snap = state.ui.weekSnapshot, list = a => (a || []).slice(0, 10).map(t => t.title);
+      const btn = $("rvAi"); busy(btn, true, "Writing…");
+      const r = await aiCall("weekly_narrative", { week: `${snap.from} to ${snap.to}`, numbers: snap, completed: list(state.ui.weekCompleted), wins: $("rv-wins").value, issues: $("rv-issues").value, priorities: $("rv-prio").value });
+      busy(btn, false);
+      if (r.error) return toastError(r.error), true;
+      const ta = $("rv-notes"); ta.value = (ta.value.trim() ? ta.value.trim() + "\n\n" : "") + r.data.text; ta.focus();
+      toast("Draft added to Notes — edit it, then save the review"); return true;
+    }
     case "rep-week": state.ui.repWeek = el.dataset.d; if (state.route.a !== "weekly") location.hash = "#/reports/weekly"; else rerender(); return true;
     case "rep-project": state.ui.repProject = el.dataset.id; rerender(); return true;
     case "rep-csv-week": download(`weekly-completed-${state.ui.weekSnapshot.from}.csv`, toCSV(state.ui.weekCompleted || [], TASK_COLS)); return true;

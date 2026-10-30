@@ -676,3 +676,5 @@ label.check { display: flex; gap: 8px; align-items: center; }
 input.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media print { .fin-tabs, .page-head .btnrow { display: none !important; } .rtable.fs { max-width: none; } }
 .tside.num, .trow .tside b.num { white-space: nowrap; }
+.briefing { margin: 6px 0 0; color: var(--ink-2); max-width: 70ch; line-height: 1.5; } .cap-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: -4px; } .chip.on { background: var(--accent-soft); color: var(--accent); }
+.copyrow { display: flex; gap: 8px; margin: 8px 0; } .copyrow .input { flex: 1; font-family: var(--mono); font-size: .8rem; } code { font-family: var(--mono); font-size: .88em; background: var(--sunken); padding: 1px 5px; border-radius: 4px; }

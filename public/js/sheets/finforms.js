@@ -1,4 +1,5 @@
 // Finance forms and actions. Nothing is posted, paid or matched unless the person presses the button that says so.
+import { aiCall } from "../assist.js";
 import { esc, todayISO, fmtDate, addDays } from "../util.js";
 import { state, nameOf } from "../store.js";
 import { sb, run, savePrefs } from "../api.js";
@@ -400,11 +401,11 @@ async function doImport(btn) {
   for (let i = 0; i < rows.length; i += 200) { const r = await run(sb.from("fin_statement_lines").insert(rows.slice(i, i + 200))); if (r.error) { busy(btn, false); await refresh(); return toastError(r.error); } }
   busy(btn, false); importRows = null; await done(`${rows.length} lines imported`);
 }
-function openStatementEntry(id) {
+function openStatementEntry(id, preAcc) {
   const s = fin.statement.find(x => x.id === id), e = entityById(s.entity_id);
   openSheet(sh => { sh.innerHTML = sheetHead("Create entry from statement", `${esc(s.description)} · ${money(s.amount, e.base_currency)}`) + `<form id="finStmtEntry" class="sh-body" data-id="${id}" novalidate>
     <p class="hint">Posts an entry on ${fmtDate(s.line_date)} between ${esc((accById(s.account_id) || {}).name)} and the account you choose, then matches it to this line.</p>
-    <label class="field"><span>${s.amount < 0 ? "What was it for?" : "What was it?"}</span><select class="input" id="fse-acc">${accOptions(e.id, null, a => a.id !== s.account_id)}</select></label>
+    <label class="field"><span>${s.amount < 0 ? "What was it for?" : "What was it?"}</span><select class="input" id="fse-acc">${accOptions(e.id, preAcc || null, a => a.id !== s.account_id)}</select></label>${preAcc ? `<p class="hint">✨ Account suggested by AI — change it if it's wrong.</p>` : ""}
     <label class="field"><span>Description</span><input class="input" id="fse-memo" value="${esc(s.description)}"></label>
     <div class="sheet-foot"><button class="btn primary block" type="submit" id="fseSave">Post & match</button></div></form>`; });
 }
@@ -470,7 +471,17 @@ export async function handleFinClick(act, el, rerender) {
       const r = s.status === "ignored" ? await run(sb.from("fin_statement_lines").update({ status: "unmatched" }).eq("id", id)) : await unmatchStatement(id);
       if (r.error) return toastError(r.error), true; await refresh(); rerender(); return true; }
     case "fin-ignore": { const r = await run(sb.from("fin_statement_lines").update({ status: "ignored" }).eq("id", id)); if (r.error) return toastError(r.error), true; await refresh(); rerender(); return true; }
-    case "fin-stmt-entry": openStatementEntry(id); return true;
+    case "fin-stmt-entry": openStatementEntry(id, el.dataset.acc); return true;
+    case "fin-ai-cat": {
+      const acc = bankingAccount(e), open = fin.statement.filter(x => x.account_id === acc.id && x.status === "unmatched").slice(0, 40);
+      const btn = $("finAiCat"); busy(btn, true, "Thinking…");
+      const r = await aiCall("categorize", { lines: open.map(x => ({ id: x.id, description: x.description, amount: Number(x.amount) })),
+        accounts: accountsOf(e.id, a => a.is_active && a.id !== acc.id).map(a => ({ id: a.id, code: a.code, name: a.name, type: a.type })) });
+      busy(btn, false);
+      if (r.error) return toastError(r.error), true;
+      const u = ui(); u.suggest = Object.assign(u.suggest || {}, Object.fromEntries(r.data.suggestions.map(x => [x.id, x])));
+      rerender(); toast(`${r.data.suggestions.length} suggestion${r.data.suggestions.length === 1 ? "" : "s"} — check each before posting`); return true;
+    }
     case "fin-import-go": await doImport(el); return true;
     case "fin-account": openAccount(id); return true;
     case "fin-account-del": if (!(await dialog({ title: "Delete this account?", confirm: "Delete", danger: true }))) return true;
