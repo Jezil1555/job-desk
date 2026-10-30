@@ -46,7 +46,8 @@ def fresh_db():
                      "category": None, "status": "not_started", "priority": "medium", "owner_id": ME, "created_by": ME, "start_date": None, "due_at": None, "due_all_day": True,
                      "follow_up_at": None, "progress": 0, "next_action": None, "completion_criteria": [], "waiting_on": None, "waiting_on_contact_id": None, "waiting_for": None,
                      "blocker": None, "blocker_impact": None, "unblock_action": None, "recurrence": None, "recurrence_parent_id": None, "cancelled_reason": None,
-                     "deleted_at": None, "client_name": None, "reference": None, "completed_at": None, "created_at": iso(now - dt.timedelta(days=4)), "updated_at": iso(now - dt.timedelta(hours=3)), **k}
+                     "deleted_at": None, "client_name": None, "reference": None, "completed_at": None, "assignee_id": None, "reviewer_id": None, "review_status": None, "review_note": None,
+                     "reviewed_by": None, "reviewed_at": None, "created_at": iso(now - dt.timedelta(days=4)), "updated_at": iso(now - dt.timedelta(hours=3)), **k}
     return {
         "workspaces": [
             {"id": WS[0], "owner_id": ME, "name": "D'Lusso & Mediate", "color": "#6b4b8a", "kind": "business", "archived": False, "sort": 0, "description": None},
@@ -106,6 +107,8 @@ def rule_check(row, old=None):
         if any(not c.get("done") for c in row.get("completion_criteria") or []): return "criteria_incomplete: tick every completion criterion before completing"
         open_pre = [d for d in DB["task_dependencies"] if d["task_id"] == row["id"] and next((t for t in DB["tasks"] if t["id"] == d["depends_on_id"] and t["status"] not in ("completed", "cancelled")), None)]
         if open_pre: return f"dependencies_incomplete: {len(open_pre)} prerequisite task(s) still open"
+        if row.get("reviewer_id") and row.get("review_status") != "approved": return "review_required: this task needs the reviewer's approval before it can be completed"
+    if row.get("reviewer_id") and row.get("reviewer_id") == (row.get("assignee_id") or row.get("owner_id")): return "self_review: the reviewer must be someone other than the person doing the work"
     if old and old.get("status") == "completed" and row.get("status") != "completed": return "reopen_reason_required: give a reason for reopening"
     return None
 
@@ -159,6 +162,16 @@ def handle(route):
         if fn.startswith("fin_"):
             try: return reply(fin_rpc(fn, body))
             except FinError as e: return err(str(e))
+        if fn == "request_task_review":
+            t = next(t for t in DB["tasks"] if t["id"] == body["p_task"])
+            if not t.get("reviewer_id"): return err("no_reviewer: choose a reviewer first")
+            t["review_status"] = "requested"; t["review_note"] = body.get("p_note"); return reply(None)
+        if fn == "review_task":
+            t = next(t for t in DB["tasks"] if t["id"] == body["p_task"])
+            if t.get("reviewer_id") != ME: return err("not_reviewer: only the reviewer can approve or ask for changes")
+            if body["p_decision"] == "approve": t.update(review_status="approved", reviewed_by=ME, status="completed", completed_at=iso(dt.datetime.now(dt.timezone.utc)), progress=100)
+            else: t.update(review_status="changes_requested", review_note=body.get("p_note"), status="in_progress")
+            return reply(None)
         if fn == "reopen_task":
             t = next(t for t in DB["tasks"] if t["id"] == body["p_task"]); t["status"] = body["p_status"]; t["completed_at"] = None
             DB["task_comments"].append({"id": str(uuid.uuid4()), "task_id": t["id"], "author_id": ME, "body": "Reopened: " + body["p_reason"], "kind": "status", "created_at": iso(dt.datetime.now(dt.timezone.utc))})
@@ -807,6 +820,30 @@ with sync_playwright() as pw:
     shot(page, "24-google-calendar-settings")
     page.click('[data-act="ig-gcal-off"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]'); page.wait_for_selector('[data-act="ig-gcal-connect"]')
     check("Disconnect asks first, then shows Connect again", "disconnect" in GCAL["calls"])
+    ctx.close()
+
+
+    # ---------- Increment 1: assignee, reviewer, review before completion ----------
+    ctx, page = new_page(b, 1366, 900)
+    rv = {**fresh_db()["tasks"][0], "id": "t-review", "title": "Customs docs pack", "workspace_id": WS[1], "owner_id": ME, "status": "in_progress", "completion_criteria": []}
+    DB["tasks"].append(rv)
+    page.goto(BASE + "/#/t/t-review"); page.wait_for_selector("#tf-reviewer_id")
+    check("task shows responsible owner, assignee and reviewer", page.locator("#tf-assignee_id").count() == 1 and page.locator("#tf-reviewer_id").count() == 1)
+    rev_opts = page.eval_on_selector_all("#tf-reviewer_id option", "os => os.map(o => o.value)")
+    check("you can't pick the person doing the work as reviewer", ME not in rev_opts and ADIL in rev_opts, str(rev_opts))
+    page.select_option("#tf-reviewer_id", ADIL); page.wait_for_selector('[data-act="review-request"]')
+    check("with a reviewer, Complete becomes Request review", rv.get("reviewer_id") == ADIL and page.locator('[data-act="complete-task"]').count() == 0)
+    page.click('[data-act="review-request"]'); page.wait_for_selector(".dlg"); page.fill("#dlgIn", "All 6 docs attached"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(500)
+    check("review requested and shown as waiting for the reviewer", rv.get("review_status") == "requested" and "Waiting for" in page.inner_text("#sheet"), page.inner_text("#toast"))
+    rv.update(assignee_id=ADIL, reviewer_id=ME, review_status="requested")
+    page.keyboard.press("Escape"); page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector(".tiles"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]')
+    page.click('[data-act="review-changes"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]')
+    check("asking for changes needs a note", page.is_visible("#dlgErr"))
+    page.fill("#dlgIn", "COO certificate missing"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(500)
+    check("changes requested sends the task back", rv.get("review_status") == "changes_requested" and rv.get("status") == "in_progress")
+    rv["review_status"] = "requested"; page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector(".tiles"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]'); page.click('[data-act="review-approve"]'); page.wait_for_timeout(500)
+    check("reviewer approval completes the task", rv.get("status") == "completed" and rv.get("review_status") == "approved")
+    shot(page, "25-task-review")
     ctx.close()
 
     # ---------- phone, light + dark ----------

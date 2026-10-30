@@ -3,7 +3,7 @@ import { esc, zonedDate, zonedTime, zonedToISO, fmtDateTime, ago } from "../util
 import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements,
          openPrerequisites, dependents, taskProgress, overduePrerequisites } from "../logic.js";
 import { state, wsById, projectById, membersOf, nameOf, shortName, subtasksOf, canWrite, contactById, activeWorkspaces } from "../store.js";
-import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor } from "../api.js";
+import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor, requestReview, reviewTask } from "../api.js";
 import { linkedPanel } from "./knowledge.js";
 import { invoicesForTask, entityById as finEntity, partyById as finParty, fin } from "../finapi.js";
 import { invoiceStatus, INVOICE_STATUS_LABEL, money } from "../finance.js";
@@ -100,7 +100,7 @@ function renderTaskInner(sh, t) {
         <select class="input" id="tf-status" ${writable ? "" : "disabled"}>${STATUSES.map(s => `<option value="${s}" ${t.status === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select></label>
       <label class="field inline"><span>Priority</span>
         <select class="input" id="tf-priority" ${writable ? "" : "disabled"}>${PRIORITIES.map(p => `<option value="${p}" ${t.priority === p ? "selected" : ""}>${PRIORITY_LABEL[p]}</option>`).join("")}</select></label>
-      ${writable && !closed ? `<button class="btn primary" data-act="complete-task" data-id="${t.id}">${ICON.check}Complete</button>` : ""}
+      ${writable && !closed ? reviewButtons(t) : ""}
       ${writable && closed && !t.deleted_at ? `<button class="btn" data-act="reopen-task" data-id="${t.id}">Reopen…</button>` : ""}
     </div>
     ${readinessBanner(t)}
@@ -120,10 +120,24 @@ function readinessBanner(t) {
   }
   const pre = openPrerequisites(t, state.deps, state.taskById), late = overduePrerequisites(t, state.deps, state.taskById);
   const parts = [];
+  if (t.reviewer_id) {
+    const rv = esc(nameOf(t.reviewer_id)), note = t.review_note ? ` — “${esc(t.review_note)}”` : "";
+    if (t.review_status === "requested") parts.push(`<div class="banner info">${ICON.clock} Waiting for <b>${rv}</b> to review${note}</div>`);
+    else if (t.review_status === "changes_requested") parts.push(`<div class="banner warn">${ICON.alert} ${rv} asked for changes${note}</div>`);
+    else parts.push(`<div class="banner muted">Needs ${rv}'s approval before it can be completed.</div>`);
+  }
   if (pre.length) parts.push(`<div class="banner ${late.length ? "bad" : "warn"}">${ICON.lock} Not ready: waiting on ${pre.length} prerequisite task${pre.length > 1 ? "s" : ""}${late.length ? `, ${late.length} of them overdue` : ""}. <button class="linkbtn" data-act="task-tab" data-tab="plan">See dependencies</button></div>`);
   if (t.status === "waiting") parts.push(`<div class="banner info">${ICON.clock} Waiting on <b>${esc(t.waiting_on || (contactById(t.waiting_on_contact_id) || {}).name || "someone")}</b>${t.waiting_for ? ` for ${esc(t.waiting_for)}` : ""}${t.follow_up_at ? ` · follow up ${fmtDateTime(t.follow_up_at, state.tz)}` : ` · <span class="warn-text">no follow-up date set</span>`}${canWrite(t.workspace_id) ? ` <button class="btn sm" data-act="draft-msg" data-kind="task" data-id="${t.id}">✉ Draft a chase message</button>` : ""}</div>`);
   if (t.status === "blocked") parts.push(`<div class="banner bad">${ICON.alert} Blocked: ${esc(t.blocker || "")}${t.unblock_action ? ` · next: ${esc(t.unblock_action)}` : ""}</div>`);
   return parts.join("");
+}
+
+function reviewButtons(t) {
+  const me = state.user.id;
+  if (!t.reviewer_id) return `<button class="btn primary" data-act="complete-task" data-id="${t.id}">${ICON.check}Complete</button>`;
+  if (t.review_status === "requested" && t.reviewer_id === me) return `<button class="btn primary" data-act="review-approve" data-id="${t.id}">${ICON.check}Approve & complete</button><button class="btn" data-act="review-changes" data-id="${t.id}">Request changes…</button>`;
+  if (t.review_status === "requested") return `<span class="chip">In review</span>`;
+  return `<button class="btn primary" data-act="review-request" data-id="${t.id}">${ICON.check}Request review</button>`;
 }
 
 function dtInputs(id, iso, allDay, tz) {
@@ -142,7 +156,9 @@ function detailsTab(t, w, prog, subs) {
   <div class="grid2">
     <label class="field"><span>Workspace</span><select class="input" id="tf-workspace_id" ${ro}>${wsList.map(x => `<option value="${x.id}" ${x.id === t.workspace_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
     <label class="field"><span>Project</span><select class="input" id="tf-project_id" ${ro}><option value="">No project</option>${projects.map(p => `<option value="${p.id}" ${p.id === t.project_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
-    <label class="field"><span>Owner</span><select class="input" id="tf-owner_id" ${ro}>${mem.map(m => `<option value="${m.user_id}" ${m.user_id === t.owner_id ? "selected" : ""}>${esc(nameOf(m.user_id))}${m.user_id === state.user.id ? " (me)" : ""}</option>`).join("")}</select></label>
+    <label class="field"><span>Responsible owner</span><select class="input" id="tf-owner_id" ${ro}>${mem.map(m => `<option value="${m.user_id}" ${m.user_id === t.owner_id ? "selected" : ""}>${esc(nameOf(m.user_id))}${m.user_id === state.user.id ? " (me)" : ""}</option>`).join("")}</select></label>
+    <label class="field"><span>Assignee <small>(does the work, optional)</small></span><select class="input" id="tf-assignee_id" ${ro}><option value="">Same as owner</option>${mem.map(m => `<option value="${m.user_id}" ${m.user_id === t.assignee_id ? "selected" : ""}>${esc(nameOf(m.user_id))}${m.user_id === state.user.id ? " (me)" : ""}</option>`).join("")}</select></label>
+    <label class="field"><span>Reviewer <small>(signs off, optional)</small></span><select class="input" id="tf-reviewer_id" ${ro}><option value="">No review needed</option>${mem.filter(m => m.user_id !== (t.assignee_id || t.owner_id)).map(m => `<option value="${m.user_id}" ${m.user_id === t.reviewer_id ? "selected" : ""}>${esc(nameOf(m.user_id))}${m.user_id === state.user.id ? " (me)" : ""}</option>`).join("")}</select></label>
     <label class="field"><span>Category</span><input class="input" id="tf-category" value="${esc(t.category || "")}" placeholder="e.g. Logistics / Supplier follow-up" ${ro} list="catList"></label>
   </div>
   <datalist id="catList">${[...new Set(state.tasks.map(x => x.category).filter(Boolean))].slice(0, 40).map(c => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -225,12 +241,14 @@ function updatesTab(t, w) {
     ${!list ? `<p class="hint">Loading…</p>` : list.length ? `<ol class="timeline">${list.map(c => `<li class="${c.kind}"><span class="pt"></span><div><time>${esc(shortName(c.author_id))} · ${fmtDateTime(c.created_at, state.tz)}</time><div class="body">${esc(c.body)}</div></div></li>`).join("")}</ol>` : `<p class="hint">No updates yet.</p>`}`;
 }
 
-const FIELD_LABEL = { title: "Title", status: "Status", priority: "Priority", owner_id: "Owner", due_at: "Deadline", start_date: "Start date", follow_up_at: "Follow-up", project_id: "Project", workspace_id: "Workspace", parent_id: "Parent", progress: "Progress", next_action: "Next action", waiting_on: "Waiting on", blocker: "Blocker", category: "Category", recurrence: "Repeats", deleted_at: "Bin", cancelled_reason: "Cancel reason" };
+const REVIEW_LABEL = { requested: "Review requested", approved: "Approved", changes_requested: "Changes requested" };
+const FIELD_LABEL = { title: "Title", status: "Status", priority: "Priority", owner_id: "Responsible owner", assignee_id: "Assignee", reviewer_id: "Reviewer", review_status: "Review", due_at: "Deadline", start_date: "Start date", follow_up_at: "Follow-up", project_id: "Project", workspace_id: "Workspace", parent_id: "Parent", progress: "Progress", next_action: "Next action", waiting_on: "Waiting on", blocker: "Blocker", category: "Category", recurrence: "Repeats", deleted_at: "Bin", cancelled_reason: "Cancel reason" };
 function fmtVal(k, v) {
   if (v === null || v === undefined || v === "") return "—";
   if (k === "status") return STATUS_LABEL[v] || v;
   if (k === "priority") return PRIORITY_LABEL[v] || v;
-  if (k === "owner_id") return nameOf(v);
+  if (k === "owner_id" || k === "assignee_id" || k === "reviewer_id") return nameOf(v);
+  if (k === "review_status") return REVIEW_LABEL[v] || v;
   if (k === "project_id") return (projectById(v) || {}).name || "project";
   if (k === "workspace_id") return (wsById(v) || {}).name || "workspace";
   if (k === "due_at" || k === "follow_up_at" || k === "deleted_at") return fmtDateTime(v, state.tz);
@@ -243,7 +261,7 @@ function historyTab() {
   if (!list.length) return `<p class="hint">No history yet.</p>`;
   return `<ol class="timeline">${list.map(a => {
     const ch = Object.entries(a.changes || {}).filter(([k, v]) => Array.isArray(v) && FIELD_LABEL[k]);
-    const what = a.action === "created" ? "created the task" : a.action === "completed" ? "completed the task" : a.action === "reopened" ? "reopened the task" : a.action === "deleted" ? "moved it to the bin" : a.action === "restored" ? "restored it" : a.action === "dependency_added" ? "added a prerequisite" : "updated";
+    const what = a.action === "created" ? "created the task" : a.action === "completed" ? "completed the task" : a.action === "reopened" ? "reopened the task" : a.action === "deleted" ? "moved it to the bin" : a.action === "restored" ? "restored it" : a.action === "dependency_added" ? "added a prerequisite" : a.action === "delegated" ? "changed who is responsible" : a.action === "review_requested" ? "asked for review" : a.action === "changes_requested" ? "asked for changes" : "updated";
     return `<li class="status"><span class="pt"></span><div><time>${esc(a.actor_id ? shortName(a.actor_id) : "System")} · ${fmtDateTime(a.created_at, state.tz)}</time>
       <div class="body">${esc(what)}${a.note ? ` — “${esc(a.note)}”` : ""}${ch.length ? `<ul class="changes">${ch.map(([k, v]) => `<li>${FIELD_LABEL[k]}: <s>${esc(fmtVal(k, v[0]))}</s> → ${esc(fmtVal(k, v[1]))}</li>`).join("")}</ul>` : ""}</div></div></li>`;
   }).join("")}</ol>`;
@@ -252,7 +270,7 @@ function historyTab() {
 function autoGrow(el) { if (!el) return; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
 
 /* ---------- events (delegated from main.js) ---------- */
-const STRUCTURAL = ["status", "workspace_id", "project_id", "recurrence", "completion_criteria", "deleted_at", "priority", "owner_id"];
+const STRUCTURAL = ["status", "workspace_id", "project_id", "recurrence", "completion_criteria", "deleted_at", "priority", "owner_id", "assignee_id", "reviewer_id"];
 function setIndicator(text, ok) {
   const s = document.querySelector("#sheet .sh-sub");
   if (!s) return;
@@ -292,7 +310,9 @@ export function handleTaskChange(e) {
   if (key === "workspace_id") {
     if (el.value === t.workspace_id) return true;
     const ownerOk = state.members.some(m => m.workspace_id === el.value && m.user_id === t.owner_id);
-    save({ workspace_id: el.value, project_id: null, milestone_id: null, parent_id: null, owner_id: ownerOk ? t.owner_id : state.user.id });
+    const isMem = u => u && state.members.some(m => m.workspace_id === el.value && m.user_id === u);
+    save({ workspace_id: el.value, project_id: null, milestone_id: null, parent_id: null, owner_id: ownerOk ? t.owner_id : state.user.id,
+      assignee_id: isMem(t.assignee_id) ? t.assignee_id : null, reviewer_id: isMem(t.reviewer_id) ? t.reviewer_id : null });
     return true;
   }
   if (key === "project_id") { save({ project_id: el.value || null, milestone_id: null }); return true; }
@@ -329,6 +349,23 @@ export async function handleTaskClick(act, el) {
   switch (act) {
     case "task-tab": sheetState.tab = el.dataset.tab; rerenderSheet(); if (sheetState.tab === "plan") loadContacts(sheetState.id); return true;
     case "complete-task": await setStatus(t, "completed"); rerenderSheet(); return true;
+    case "review-request": {
+      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById);
+      if (blockers.length) return toastError("Finish first: " + blockers.join(", ") + "."), true;
+      const note = await dialog({ title: `Ask ${nameOf(t.reviewer_id)} to review`, text: "Optional note for the reviewer (what to check, where the documents are).", input: { label: "Note", multiline: true }, confirm: "Request review" });
+      if (note === null || note === undefined) return true;
+      const r = await requestReview(t.id, note); if (r.error) return toastError(r.error), true;
+      toast(`Sent to ${nameOf(t.reviewer_id)} for review`); rerenderSheet(); return true; }
+    case "review-approve": {
+      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById);
+      if (blockers.length) return toastError("Can't complete yet: " + blockers.join(", ") + "."), true;
+      const r = await reviewTask(t.id, "approve"); if (r.error) return toastError(r.error), true;
+      toast("Approved and completed"); rerenderSheet(); return true; }
+    case "review-changes": {
+      const note = await dialog({ title: "Request changes", text: "What needs to change? The person doing the work is notified.", input: { label: "Changes needed", required: true, min: 3, multiline: true }, confirm: "Send back" });
+      if (!note) return true;
+      const r = await reviewTask(t.id, "changes", note); if (r.error) return toastError(r.error), true;
+      toast("Sent back with your notes"); rerenderSheet(); return true; }
     case "reopen-task": await setStatus(t, "in_progress"); rerenderSheet(); return true;
     case "cancel-task": await setStatus(t, "cancelled"); rerenderSheet(); return true;
     case "toggle-complete": {

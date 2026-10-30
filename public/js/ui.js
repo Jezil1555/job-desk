@@ -87,7 +87,8 @@ export function taskRow(t, { showWs = true, selectable = false, selected = false
       ${prioChip(t.priority)}
       ${statusPill(t.status)}
       ${d.text ? `<span class="due ${d.cls}">${d.text}</span>` : ""}
-      ${t.owner_id && t.owner_id !== state.user.id ? avatar(t.owner_id, "sm") : ""}
+      ${t.review_status === "requested" ? `<span class="chip" title="Waiting for review">In review</span>` : ""}
+      ${(t.assignee_id || t.owner_id) && (t.assignee_id || t.owner_id) !== state.user.id ? avatar(t.assignee_id || t.owner_id, "sm") : ""}
     </div>
   </div>`;
 }

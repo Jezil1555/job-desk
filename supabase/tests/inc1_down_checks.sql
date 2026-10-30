@@ -1,0 +1,1 @@
+select 'trigger functions restored: ' || (position('ORIGINAL-BEFORE' in pg_get_functiondef('public.tasks_before_write()'::regprocedure)) > 0 and position('ORIGINAL-AFTER' in pg_get_functiondef('public.tasks_after_write()'::regprocedure)) > 0)::text;

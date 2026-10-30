@@ -9,10 +9,12 @@ Legend: **Met** · **Partial** (works, but a stated requirement is missing) · *
 Separate tables with their own lifecycle: `workspaces`, `projects`, `tasks` (subtasks via `parent_id`, one level), `task_dependencies`, `milestones`,
 `follow_ups` + `follow_up_logs` (commitments), `contacts` (person/organisation), `task_comments`, `documents` (attachments), `activity`, `notifications`, `record_links`.
 
-## 2. Ownership and accountability — Partial
-- Met: `created_by`, responsible `owner_id` (must be a workspace member), `due_at`, `next_action`; owner and status changes are logged in `activity`
-  with old → new values (this is the status and delegation history); changing project never changes the owner.
-- Gap: no separate **assignee** or **reviewer**; no history view on the task screen.
+## 2. Ownership and accountability — Met (increment 1, 30 Oct)
+- `created_by`, responsible `owner_id`, optional `assignee_id` and `reviewer_id` (all must be workspace members; the reviewer can't be the person doing the work),
+  `due_at`, `next_action`. A task with a reviewer can only be completed by the reviewer's approval (`request_task_review` / `review_task`); review state can't be edited directly.
+- Delegation and status history: every change of owner, assignee, reviewer, review state and status is logged in `activity` (old → new, who, when) and shown on the task's History tab.
+- Changing project never changes people; moving workspace keeps people only if they're members there.
+- Tests: 19 live DB checks (rolled back), rollback script verified locally (schema identical after undo), 1 unit, 7 browser checks.
 
 ## 3. Commitment tracking — Partial
 - Met: responsible person/organisation (`contact_id` / `counterpart`), expected date, last contact, next follow-up, escalation date and status,
@@ -60,7 +62,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 - Dlusso: PR-0001 (5,186) payroll source to verify; four best-guess accounts; bank opening balance not entered (bank shows −8,000).
 
 ## Proposed increments (one at a time, each fully tested before deploy)
-1. **Task accountability** — assignee and reviewer fields, delegation/status history panel on the task. *Small.*
+1. ~~Task accountability~~ — done.
 2. **Commitments** — expected / response / outcome fields, internal-external flag, outcome required to close.
 3. **Project baselines** — baseline dates on projects and milestones, revision log with reason, slip report.
 4. **AI proposal log** — every AI suggestion recorded with accept / edit / reject.

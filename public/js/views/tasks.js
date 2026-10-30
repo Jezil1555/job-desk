@@ -16,7 +16,7 @@ export function currentTaskList(view) {
   if (f.ws) list = list.filter(t => t.workspace_id === f.ws);
   if (f.priority) list = list.filter(t => t.priority === f.priority);
   if (f.status) list = list.filter(t => t.status === f.status);
-  if (f.owner === "me") list = list.filter(t => t.owner_id === uid); else if (f.owner === "others") list = list.filter(t => t.owner_id !== uid); else if (f.owner) list = list.filter(t => t.owner_id === f.owner);
+  if (f.owner === "me") list = list.filter(t => t.owner_id === uid || t.assignee_id === uid); else if (f.owner === "review") list = list.filter(t => t.reviewer_id === uid && t.review_status === "requested"); else if (f.owner === "others") list = list.filter(t => t.owner_id !== uid); else if (f.owner) list = list.filter(t => t.owner_id === f.owner);
   if (f.project) list = list.filter(t => t.project_id === f.project);
   if (f.top) list = list.filter(t => !t.parent_id);
   if (state.ui.search) { const q = state.ui.search.toLowerCase(); list = list.filter(t => [t.title, t.description, t.reference, t.client_name, t.next_action, t.category, t.waiting_on].some(v => v && v.toLowerCase().includes(q))); }
@@ -48,7 +48,7 @@ export function renderTasks(view, viewKey) {
     <select class="input sm" id="tl-project" aria-label="Project"><option value="">All projects</option>${projects.map(p => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
     <select class="input sm" id="tl-priority" aria-label="Priority"><option value="">Any priority</option>${PRIORITIES.map(p => `<option value="${p}" ${f.priority === p ? "selected" : ""}>${PRIORITY_LABEL[p]}</option>`).join("")}</select>
     <select class="input sm" id="tl-status" aria-label="Status"><option value="">Any status</option>${STATUSES.map(s => `<option value="${s}" ${f.status === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select>
-    <select class="input sm" id="tl-owner" aria-label="Owner"><option value="">Anyone</option><option value="me" ${f.owner === "me" ? "selected" : ""}>Me</option><option value="others" ${f.owner === "others" ? "selected" : ""}>Others</option>${owners.filter(o => o !== state.user.id).map(o => `<option value="${o}" ${f.owner === o ? "selected" : ""}>${esc(nameOf(o))}</option>`).join("")}</select>
+    <select class="input sm" id="tl-owner" aria-label="Owner"><option value="">Anyone</option><option value="me" ${f.owner === "me" ? "selected" : ""}>Me</option><option value="review" ${f.owner === "review" ? "selected" : ""}>Waiting for my review</option><option value="others" ${f.owner === "others" ? "selected" : ""}>Others</option>${owners.filter(o => o !== state.user.id).map(o => `<option value="${o}" ${f.owner === o ? "selected" : ""}>${esc(nameOf(o))}</option>`).join("")}</select>
     <select class="input sm" id="tl-sort" aria-label="Sort"><option value="smart">Sort: deadline</option>${[["priority", "Sort: priority"], ["updated", "Sort: recently updated"], ["created", "Sort: newest"], ["title", "Sort: A–Z"]].map(([k, l]) => `<option value="${k}" ${(state.ui.sort || state.prefs.task_sort) === k ? "selected" : ""}>${l}</option>`).join("")}</select>
     <label class="chk"><input type="checkbox" id="tl-top" ${f.top ? "checked" : ""}> Hide subtasks</label>
     ${filtersOn ? `<button class="linkbtn" data-act="clear-filters">Clear filters (${filtersOn})</button>` : ""}
@@ -111,7 +111,9 @@ async function bulkApply(kind, value, rerender) {
       const r = await updateTask(id, { priority: value }); r.error ? failed.push(`${t.title}: ${r.error}`) : ok++;
     } else {
       const ownerOk = state.members.some(m => m.workspace_id === value && m.user_id === t.owner_id);
-      const r = await updateTask(id, { workspace_id: value, project_id: null, milestone_id: null, parent_id: null, owner_id: ownerOk ? t.owner_id : state.user.id });
+      const isMem = u => u && state.members.some(m => m.workspace_id === value && m.user_id === u);
+      const r = await updateTask(id, { workspace_id: value, project_id: null, milestone_id: null, parent_id: null, owner_id: ownerOk ? t.owner_id : state.user.id,
+        assignee_id: isMem(t.assignee_id) ? t.assignee_id : null, reviewer_id: isMem(t.reviewer_id) ? t.reviewer_id : null });
       r.error ? failed.push(`${t.title}: ${r.error}`) : ok++;
     }
   }

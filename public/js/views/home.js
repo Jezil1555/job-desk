@@ -25,7 +25,7 @@ export function renderHome(view) {
   const wsFilter = state.ui.homeWs, ownerFilter = state.ui.homeOwner || "me";
   const act = new Set(activeWorkspaces().map(w => w.id));
   const inScope = x => act.has(x.workspace_id) && (!wsFilter || x.workspace_id === wsFilter);
-  const tasks = state.tasks.filter(t => inScope(t) && !t.deleted_at && (ownerFilter === "all" || t.owner_id === uid || (ownerFilter === "me" && t.created_by === uid && !t.owner_id)));
+  const tasks = state.tasks.filter(t => inScope(t) && !t.deleted_at && (ownerFilter === "all" || t.owner_id === uid || t.assignee_id === uid || (t.reviewer_id === uid && t.review_status === "requested") || (ownerFilter === "me" && t.created_by === uid && !t.owner_id)));
   const open = tasks.filter(isOpen);
   const fus = state.followUps.filter(f => inScope(f) && ["open", "escalated"].includes(f.status) && (ownerFilter === "all" || f.owner_id === uid));
   const projects = state.projects.filter(p => inScope(p) && !p.archived);

@@ -58,6 +58,7 @@ export function completionBlockers(task, subtasks, deps, tasksById) {
   if (openSubs.length) out.push(`${openSubs.length} subtask${openSubs.length === 1 ? "" : "s"} still open`);
   const pre = openPrerequisites(task, deps, tasksById);
   if (pre.length) out.push(`${pre.length} prerequisite task${pre.length === 1 ? "" : "s"} still open`);
+  if (task.reviewer_id && task.review_status !== "approved") out.push("the reviewer hasn't approved it yet");
   return out;
 }
 
@@ -161,3 +162,8 @@ export function milestoneVariance(m, tz = DEFAULT_TZ, now = new Date()) {
   const n = daysFromToday(m.planned_date, tz, now);
   return n < 0 ? -n : null; // late so far (open and past plan)
 }
+
+/** Who is doing the work: the assignee if there is one, otherwise the responsible owner. */
+export const doerOf = t => t.assignee_id || t.owner_id;
+/** Tasks that involve this person: responsible for, assigned to, or waiting for their review. */
+export const involves = (t, uid) => t.owner_id === uid || t.assignee_id === uid || (t.reviewer_id === uid && t.review_status === "requested");

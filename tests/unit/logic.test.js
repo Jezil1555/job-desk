@@ -104,3 +104,13 @@ test("milestone variance from real dates only", () => {
   assert.equal(milestoneVariance({ planned_date: "2026-10-27", actual_date: null }, "Asia/Qatar", NOW), 2);
   assert.equal(milestoneVariance({ planned_date: "2026-11-27", actual_date: null }, "Asia/Qatar", NOW), null, "future open milestone isn't late");
 });
+
+test("a task with a reviewer can't be completed until approved", async () => {
+  const { completionBlockers, doerOf, involves } = await import("../../public/js/logic.js");
+  const t = { id: "r1", status: "in_progress", completion_criteria: [], reviewer_id: "u2", review_status: "requested", owner_id: "u1", assignee_id: "u3" };
+  assert.deepEqual(completionBlockers(t, [], [], new Map()), ["the reviewer hasn't approved it yet"]);
+  assert.deepEqual(completionBlockers({ ...t, review_status: "approved" }, [], [], new Map()), []);
+  assert.equal(doerOf(t), "u3"); assert.equal(doerOf({ ...t, assignee_id: null }), "u1");
+  assert.ok(involves(t, "u1") && involves(t, "u2") && involves(t, "u3") && !involves(t, "u4"));
+  assert.ok(!involves({ ...t, review_status: "approved" }, "u2"));
+});

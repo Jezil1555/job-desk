@@ -95,6 +95,16 @@ export async function reopenTask(id, reason, status = "in_progress") {
   if (!r.error) await refreshTask(id);
   return r;
 }
+export async function requestReview(id, note) {
+  const r = await run(sb.rpc("request_task_review", { p_task: id, p_note: note || null }));
+  if (!r.error) await refreshTask(id);
+  return r;
+}
+export async function reviewTask(id, decision, note) {
+  const r = await run(sb.rpc("review_task", { p_task: id, p_decision: decision, p_note: note || null }));
+  if (!r.error) await refreshTask(id);
+  return r;
+}
 export async function refreshTask(id) {
   const { data } = await sb.from("tasks").select("*").eq("id", id).maybeSingle();
   if (data) { const i = state.tasks.findIndex(t => t.id === id); if (i >= 0) state.tasks[i] = data; else state.tasks.push(data); reindex(); emit("data"); }

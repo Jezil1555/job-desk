@@ -1,5 +1,5 @@
 // Job Desk service worker: offline app shell + phone push notifications.
-const CACHE = "jobdesk-v8";
+const CACHE = "jobdesk-v9";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/config.js", "/manifest.webmanifest",
   "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/smart.js", "/js/assist.js", "/js/partners.js", "/js/xlsx.js", "/js/api.js", "/js/store.js", "/js/ui.js",
