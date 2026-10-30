@@ -11,6 +11,9 @@ import { renderHome } from "./views/home.js";
 import { renderNotes, handleNotesChange, handleNotesInput, NOTE_TABS } from "./views/notes.js";
 import { renderGoals, handleGoalsClick, handleGoalsChange, handleGoalsSubmit } from "./views/goals.js";
 import { renderReports, handleReportsClick, handleReportsChange, handleReportsSubmit, REPORT_TABS } from "./views/reports.js";
+import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
+import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
+import { loadFin, fin } from "./finapi.js";
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
@@ -22,7 +25,7 @@ const NAV = [
   { key: "tasks", label: "My Tasks", icon: "tasks", href: "#/tasks/today" },
   { key: "workspaces", label: "Projects & Workspaces", icon: "folder", href: "#/workspaces" },
   { key: "calendar", label: "Calendar & Follow-ups", icon: "calendar", href: "#/calendar" },
-  { key: "finance", label: "Finance & CFO", icon: "finance", href: "#/finance", soon: "Phase 3" },
+  { key: "finance", label: "Finance & CFO", icon: "finance", href: "#/finance" },
   { key: "goals", label: "Goals & Habits", icon: "goals", href: "#/goals" },
   { key: "notes", label: "Notes & Documents", icon: "notes", href: "#/notes" },
   { key: "reports", label: "Reports & Insights", icon: "reports", href: "#/reports" },
@@ -69,7 +72,7 @@ function render() {
       case "notes": renderNotes(view, r.a || "notes"); break;
       case "goals": renderGoals(view, r.a || "habits"); break;
       case "reports": renderReports(view, r.a || "daily"); break;
-      case "finance": renderPlanned(view, r.name); break;
+      case "finance": r.a ? renderFinance(view, r.a, r.b || "overview") : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
       default: renderHome(view); title = "Command Centre";
     }
   } catch (e) {
@@ -131,6 +134,7 @@ document.addEventListener("click", async e => {
   if (await handleKnowledgeClick(act, el)) return;
   if (await handleGoalsClick(act, el, rerender)) return;
   if (await handleReportsClick(act, el, rerender)) return;
+  if (await handleFinClick(act, el, rerender)) return;
   const id = el.dataset.id;
   switch (act) {
     case "close-sheet": closeSheet(); if (!sheetOpen()) clearTaskSheet(); break;
@@ -177,6 +181,7 @@ document.addEventListener("change", async e => {
   if (handleNotesChange(e, rerender)) return;
   if (handleGoalsChange(e, rerender)) return;
   if (handleReportsChange(e, rerender)) return;
+  if (await handleFinChange(e, rerender)) return;
   const id = e.target.id;
   if (id === "home-ws") { state.ui.homeWs = e.target.value; render(); }
   if (id === "home-owner") { state.ui.homeOwner = e.target.value; render(); }
@@ -190,6 +195,7 @@ document.addEventListener("input", e => {
   handleTaskInput(e);
   if (handleKnowledgeInput(e)) return;
   if (handleNotesInput(e, keepFocus)) return;
+  if (handleFinInput(e, keepFocus)) return;
   if (e.target.id === "global-q") { state.ui.globalQ = e.target.value; searchDebounced(e.target.value); }
   if (e.target.id === "tl-search") { state.ui.search = e.target.value; listDebounced(); }
   if (e.target.id === "topsearch") { state.ui.globalQ = e.target.value; }
@@ -205,14 +211,16 @@ document.addEventListener("submit", async e => {
   if (await handleKnowledgeSubmit(form)) return;
   if (await handleGoalsSubmit(form, rerender)) return;
   if (await handleReportsSubmit(form, rerender)) return;
+  if (await handleFinSubmit(form, rerender, e.submitter)) return;
 });
 $("sheetWrap").addEventListener("click", e => { if (e.target.id === "sheetBackdrop") { closeSheet(); if (!sheetOpen()) clearTaskSheet(); } });
-window.addEventListener("hashchange", () => { closeAllSheets(); clearTaskSheet(); state.ui.selecting = false; state.ui.selected.clear(); render(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => { closeAllSheets(); clearTaskSheet(); finSheetReset(); state.ui.selecting = false; state.ui.selected.clear(); render(); window.scrollTo(0, 0); });
 window.addEventListener("online", () => { $("offline").hidden = true; if (state.user) loadAll().catch(() => {}); });
 window.addEventListener("offline", () => { $("offline").hidden = false; });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.user && state.loaded && Date.now() - (state.loadedAt || 0) > 30000) loadAll().catch(() => {}); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.user && state.loaded && Date.now() - (state.loadedAt || 0) > 30000) { loadAll().catch(() => {}); loadFin(true); } });
 on("data", () => { if (state.user) { if (!sheetOpen() || !document.activeElement || !document.activeElement.closest("#view")) render(); else renderNav(); } });
 on("notifications", () => renderNav());
+on("fin", () => { if (!state.user) return; if (state.route.name === "finance") render(); /* the view sits under any open sheet, so it is safe to refresh */ });
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "open" && e.data.url) location.hash = e.data.url.replace(/^\/?#?/, "#"); });
 setInterval(() => { if (state.loaded && !sheetOpen() && ["home", "tasks"].includes(state.route.name)) render(); }, 60000);
 
@@ -301,6 +309,7 @@ async function showApp() {
   render();
   if (pendingOpen) { const p = pendingOpen; pendingOpen = null; openDeep(p.name, p.a); }
   ensurePush();
+  loadFin(); // finance loads in the background; screens show a spinner until it arrives
 }
 sb.auth.onAuthStateChange((event, session) => {
   if (event === "PASSWORD_RECOVERY") { recovery = true; state.user = session.user; authMode = "newpass"; showAuth(); return; }

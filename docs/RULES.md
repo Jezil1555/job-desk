@@ -81,3 +81,20 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 ## Reports (Phase 2)
 - Every figure is counted from stored records at the time shown. On-time completion = completed in the week ÷ (completed + due in the week and still open).
 - Weekly review (wins, issues, priorities, notes) is private, one per week, saved with a snapshot of that week's numbers.
+
+## Finance (Phase 3)
+- **Separate books per entity.** Each set of books (Personal & Family, Dlusso Bespoke, Fitness Hub, The Burgery Thrissur, or any new one) has its own members, base currency, chart of accounts, entries and reports. Access is granted per set of books (owner / bookkeeper / viewer) and is independent of workspace access. Personal books are visible only to the people added to them.
+- **Double entry.** Entries start as drafts. Posting requires at least two lines, debits = credits > 0, active accounts from the same books, and a date after the lock date. Drafts never affect any figure.
+- **No edits after posting.** Posted entries and their lines can't be edited or deleted; they are reversed (a mirror-image entry is posted with a reason, and both are linked). Invoices, bills, payments and stock adjustments are corrected by voiding them, which reverses their entry.
+- **Numbering** is automatic and sequential per set of books: entries #1, #2…; invoices INV-0001…; bills BILL-0001…. The supplier's own number goes in "Supplier's bill number".
+- **Invoices & bills** post: sale → Dr receivable / Cr income (plus Dr cost of sales / Cr inventory at moving-average cost for stock items); bill → Dr expense/asset or inventory / Cr payable. Due dates are optional and never invented. A posted invoice can only have its due date, notes and task link changed.
+- **Payments are recorded only by a person**, against a cash, bank or card account, and can be applied to open invoices/bills of that customer/supplier (never more than is outstanding). Completing a task linked to a bill never marks it paid. A payment matched to a bank statement must be unmatched before it can be voided.
+- **Stock**: purchases on bills add stock at cost; sales remove it at average cost; selling more than is on hand is refused. Opening stock is posted against opening equity; count corrections against cost of sales.
+- **Bank reconciliation**: CSV statements are imported (dates read day-first; money in positive), duplicates are skipped, and each line is matched to a posted entry on the same account with the same amount, ignored, or turned into a new posted entry.
+- **Period lock**: owners can lock books up to a date; nothing dated on or before it can be posted, reversed or voided.
+- **Budgets** are plans kept separately from actuals; variance is shown as favourable (+) or unfavourable (−).
+- **Reports** (P&L, balance sheet, cash flow, trial balance, receivables/payables ageing, general ledger) are calculated from posted entries only. Unclosed profit is shown as current earnings. Cash flow is direct-method, classified by each entry's main counterpart account.
+- **Combined view** on the Finance page converts each entity at the management rate in Settings (default 26.10 INR = 1 QAR) for planning only; entity books are never converted.
+- **Reminders**: owners and bookkeepers are notified once when a posted bill is due within 3 days, and once when a bill or customer invoice becomes overdue.
+- **Audit**: every change to books, members, accounts, entries, invoices, payments, statement lines and budgets is written to an append-only finance log that members can read.
+- Receipts and invoices are stored in a private `finance` bucket and open through links that expire after 10 minutes.

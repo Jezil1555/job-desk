@@ -49,3 +49,23 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 ### Known limitations
 - Linking an existing note/document from a task uses a numbered picker; a searchable picker is a later refinement.
 - Health log has no charts beyond the weight trend.
+
+
+## 2026-10-30 — Phase 3 (Finance & CFO)
+
+### Changes
+- **Schema** (`20261030090000_phase3_finance.sql`, `20261030110000_fin_tighten_grants.sql`, applied): `fin_entities`, `fin_members`, `fin_accounts` (personal and business templates), `fin_parties`, `fin_journals` + `fin_lines` (double entry), `fin_invoices` + `fin_invoice_lines`, `fin_items` + `fin_stock_moves` (moving-average cost), `fin_payments` + `fin_allocations`, `fin_statement_lines`, `fin_budgets`, `fin_files` (private `finance` bucket), `fin_audit`; view `fin_invoice_totals`; functions to post, reverse, post/void invoices, record/void payments, adjust stock, match/unmatch statements, add members; hourly `fin_reminders()` job. Additive only.
+- **Books created** (empty, no balances): Personal & Family (QAR, personal template), Dlusso Bespoke (QAR), Fitness Hub (QAR), The Burgery Thrissur (INR); each linked to its workspace, owned by Jezz.
+- **Frontend**: Finance home (all books + combined view at management rate), per-entity Overview, Entries (journal editor with live balance check, drafts, reversal), opening-balances wizard, quick Expense/Income/Transfer, Invoices, Bills, Payments, Banking (CSV import, match, create entry, ignore), Accounts + ledger, Customers & suppliers with balances, Stock, Budgets, Reports (P&L, balance sheet, cash flow, trial balance, ageing, general ledger; print/PDF and CSV), Settings (members/roles, lock date, financial year, audit log); receipts on entries/invoices/payments; bills & invoices shown on linked tasks. Service worker cache → `jobdesk-v5`.
+
+### Verification
+- Unit tests: `npm test` → 44/44 (adds 16 finance calculations: posted-only, TB, P&L, balance sheet, cash flow, ledger, invoice status, ageing, budget variance, entry checks, FX, bank CSV/dates, match candidates).
+- Database tests: `supabase/tests/phase3_tests.sql` → 73/73 on a local Postgres 16 (with `supabase/tests/local/stubs.sql`) and 73/73 on the live project in a rolled-back transaction with throwaway users and test books. Verified afterwards: no test users, books, entries, files or notifications left. Re-checked after the grant change (posting still works; signed-out visitors and internal helpers blocked).
+- End-to-end UI: `python3 tests/e2e/run.py` → 99/99 (adds 28 finance checks incl. opening balances, quick expense, unbalanced entry refused, invoice → part payment → status, P&L/BS/TB figures, CSV export, statement import + match, budget, phone layouts).
+- Security advisor: finance functions no longer callable by anonymous visitors; remaining warnings are the intentional signed-in helper/RPC functions (each checks the caller), `pg_net` in public, and leaked-password protection (dashboard).
+
+### Known limitations
+- Invoices and bills are in the entity's base currency; foreign-currency amounts can be noted on entry lines but aren't revalued.
+- No tax/VAT/GST engine yet (Qatar has no VAT; India GST for The Burgery would be a later addition).
+- Average cost uses all movements to date (not date-sensitive back-dating).
+- Recurring bills and earmarked-fund rules are not automated yet.

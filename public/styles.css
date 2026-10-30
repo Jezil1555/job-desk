@@ -646,3 +646,33 @@ ul.plain svg { width: 14px; height: 14px; color: var(--ok); }
 .page-head .sub svg { width: 14px; height: 14px; display: inline; vertical-align: -2px; margin-right: 2px; }
 .banner svg { width: 15px; height: 15px; vertical-align: -2px; }
 .rtable td:first-child { min-width: 140px; }
+
+/* ===================== Phase 3: finance ===================== */
+.fin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 16px; }
+.fin-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); text-decoration: none; align-content: start; }
+.fin-card:hover { border-color: var(--accent); text-decoration: none; }
+.fc-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .fc-h b { font-family: var(--display); font-size: 1.2rem; font-weight: 600; margin-right: auto; }
+.fc-kv, .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: .92rem; }
+.fc-kv dt, .kv dt { color: var(--muted); } .fc-kv dd, .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; } .kv dd { text-align: left; }
+.chip svg { width: 12px; height: 12px; }
+.fin-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; } .fin-tabs::-webkit-scrollbar { display: none; } .fin-tabs a { white-space: nowrap; }
+.pill.inv-draft { background: var(--sunken); color: var(--muted); } .pill.inv-unpaid { background: var(--info-soft); color: var(--info); }
+.pill.inv-partial { background: var(--warn-soft); color: var(--warn); } .pill.inv-paid { background: var(--ok-soft); color: var(--ok); }
+.pill.inv-overdue { background: var(--bad-soft); color: var(--bad); } .pill.inv-void { background: var(--sunken); color: var(--faint); text-decoration: line-through; }
+.rtable tr.clickrow { cursor: pointer; } .rtable tr.clickrow:hover td { background: var(--surface-2); }
+.rtable tr.muted td, .trow.muted { color: var(--faint); }
+.rtable tr.grouprow th { background: var(--surface-2); text-transform: uppercase; font-size: .72rem; letter-spacing: .06em; color: var(--muted); text-align: left; }
+.rtable tr.subtotal td { font-weight: 600; border-top: 1px solid var(--line-2); }
+.rtable tr.total td { font-weight: 700; border-top: 2px solid var(--ink-2); background: var(--surface-2); }
+.rtable.fs { max-width: 720px; } .acode { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; font-size: .85em; }
+.fin-report .rep-title { font-family: var(--display); font-size: 1.4rem; margin: 0; }
+.inv-head { display: flex; gap: 22px; align-items: flex-end; flex-wrap: wrap; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-2); }
+.inv-head > div { display: grid; } .num.big, b.big { font-size: 1.5rem; }
+.lead { font-size: 1.05rem; margin: 0; }
+.steps { margin: 0; padding-left: 1.2em; display: grid; gap: 12px; } .steps li { line-height: 1.5; } .steps .btn { margin-left: 6px; }
+.jlines td { padding: 6px; vertical-align: middle; } .jlines select.input, .jlines input.input { width: 100%; min-width: 7em; }
+.trow.stmt .btnrow { margin-top: 8px; flex-wrap: wrap; } .trow.stmt .btn.sm { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+label.check { display: flex; gap: 8px; align-items: center; }
+input.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media print { .fin-tabs, .page-head .btnrow { display: none !important; } .rtable.fs { max-width: none; } }
+.tside.num, .trow .tside b.num { white-space: nowrap; }

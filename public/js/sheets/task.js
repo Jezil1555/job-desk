@@ -5,6 +5,8 @@ import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, i
 import { state, wsById, projectById, membersOf, nameOf, shortName, subtasksOf, canWrite, contactById, activeWorkspaces } from "../store.js";
 import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor } from "../api.js";
 import { linkedPanel } from "./knowledge.js";
+import { invoicesForTask, entityById as finEntity, partyById as finParty, fin } from "../finapi.js";
+import { invoiceStatus, INVOICE_STATUS_LABEL, money } from "../finance.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, statusPill, prioChip, taskRow, avatar, dueLabel, busy } from "../ui.js";
 
 const sheetState = { tab: "details", comments: null, activity: null, saving: 0, savedAt: null };
@@ -207,7 +209,8 @@ function planTab(t, w, subs) {
     <div id="taskContacts" class="chips">Loading…</div>
     ${w && links.length ? `<select class="input" id="addContact"><option value="">Link a contact…</option>${links.map(c => `<option value="${c.id}">${esc(c.name)}${c.organisation ? " · " + esc(c.organisation) : ""} (${c.kind})</option>`).join("")}</select>` : ""}
   </section>
-  ${linkedPanel("task", t.id, t.workspace_id)}`;
+  ${linkedPanel("task", t.id, t.workspace_id)}
+  ${finPanel(t)}`;
 }
 function depRow(p, w, act, tid) {
   const d = dueLabel(p);
@@ -407,3 +410,15 @@ export async function handleContactSelect(e) {
 }
 export const currentTaskId = () => sheetState.id;
 export function clearTaskSheet() { sheetState.id = null; }
+
+/* bills & invoices linked to this task (from the finance books the user can see). Read-only here: paying is always a separate, explicit step. */
+function finPanel(t) {
+  const inv = invoicesForTask(t.id);
+  if (!inv.length) return "";
+  const today = new Date().toISOString().slice(0, 10);
+  return `<section class="sub"><div class="sub-h"><h3>Bills & invoices</h3><span class="c">${inv.length}</span></div>
+    ${inv.map(i => { const e = finEntity(i.entity_id), tt = fin.totals.get(i.id), s = invoiceStatus(i, tt, today);
+      return `<div class="krow"><span class="kico">${i.kind === "sale" ? "↗" : "↙"}</span><button class="linkbtn" data-act="fin-open-invoice" data-id="${i.id}">${esc(i.number || "Draft")} · ${esc((finParty(i.party_id) || {}).name || "")}</button>
+        <small>${e ? money(tt ? tt.total : 0, e.base_currency) : ""} · <span class="pill inv-${s}">${INVOICE_STATUS_LABEL[s]}</span></small></div>`; }).join("")}
+    <p class="hint">Completing this task doesn't mark anything paid — record the payment in Finance.</p></section>`;
+}

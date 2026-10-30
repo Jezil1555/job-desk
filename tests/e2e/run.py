@@ -26,6 +26,21 @@ iso = lambda d: d.isoformat().replace("+00:00", "Z")
 WS = ["aaaaaaa1-0000-4000-8000-000000000001", "aaaaaaa1-0000-4000-8000-000000000002", "aaaaaaa1-0000-4000-8000-000000000003"]
 P1 = "bbbbbbb1-0000-4000-8000-000000000001"
 
+FE1, FE2 = "fe000000-0000-4000-8000-000000000001", "fe000000-0000-4000-8000-000000000002"
+def seed_accounts(eid):
+    rows = [("1000", "Cash on hand", "asset", "cash", "cash"), ("1010", "Bank account", "asset", "bank", "bank"), ("1100", "Accounts receivable", "asset", "receivable", "ar"),
+            ("2000", "Accounts payable", "liability", "payable", "ap"), ("3900", "Opening balance equity", "equity", "other", "opening"), ("4000", "Sales", "income", "other", "sales"),
+            ("6000", "Rent", "expense", "other", None), ("6900", "Other expenses", "expense", "other", None)]
+    return [{"id": f"{eid[:8]}-acc-{c}", "entity_id": eid, "code": c, "name": n, "type": t, "subtype": st, "system_key": k, "is_active": True, "description": None} for c, n, t, st, k in rows]
+def fin_fixture():
+    ents = [{"id": FE1, "name": "Dlusso Bespoke", "kind": "business", "base_currency": "QAR", "workspace_id": WS[0], "fiscal_year_start": 1, "lock_date": None, "archived": False, "created_by": ME,
+             "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, "created_at": iso(now)},
+            {"id": FE2, "name": "The Burgery Thrissur", "kind": "business", "base_currency": "INR", "workspace_id": None, "fiscal_year_start": 4, "lock_date": None, "archived": False, "created_by": ME,
+             "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, "created_at": iso(now)}]
+    return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
+            "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
+            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": []}
+
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
                      "category": None, "status": "not_started", "priority": "medium", "owner_id": ME, "created_by": ME, "start_date": None, "due_at": None, "due_all_day": True,
@@ -61,7 +76,8 @@ def fresh_db():
         "task_comments": [], "activity": [], "follow_up_logs": [], "task_contacts": [], "push_subscriptions": [],
         "notes": [{"id": "n-dec", "workspace_id": WS[1], "kind": "decision", "title": "Use sea freight for KSA lane", "body": "", "tags": ["ksa"], "meeting_date": None, "attendees": None,
                    "decision": "Move KSA shipments to sea freight", "rationale": "Cost", "decision_status": "proposed", "decided_on": None, "pinned": False, "created_by": ME, "created_at": iso(now - dt.timedelta(days=2)), "updated_at": iso(now - dt.timedelta(days=2))}],
-        "documents": [], "record_links": [], "goals": [], "goal_updates": [], "habits": [], "habit_logs": [], "health_logs": [], "weekly_reviews": []
+        "documents": [], "record_links": [], "goals": [], "goal_updates": [], "habits": [], "habit_logs": [], "health_logs": [], "weekly_reviews": [],
+        **fin_fixture()
     }
 
 DB = fresh_db()
@@ -115,6 +131,9 @@ def handle(route):
             q = body.get("q", "").lower()
             return reply([{"kind": "task", "id": t["id"], "title": t["title"], "subtitle": "", "workspace_id": t["workspace_id"]} for t in DB["tasks"] if q in t["title"].lower()] +
                          [{"kind": "note", "id": n["id"], "title": n["title"], "subtitle": "", "workspace_id": n["workspace_id"]} for n in DB["notes"] if q in (n["title"] + " " + (n["body"] or "")).lower()])
+        if fn.startswith("fin_"):
+            try: return reply(fin_rpc(fn, body))
+            except FinError as e: return err(str(e))
         if fn == "reopen_task":
             t = next(t for t in DB["tasks"] if t["id"] == body["p_task"]); t["status"] = body["p_status"]; t["completed_at"] = None
             DB["task_comments"].append({"id": str(uuid.uuid4()), "task_id": t["id"], "author_id": ME, "body": "Reopened: " + body["p_reason"], "kind": "status", "created_at": iso(dt.datetime.now(dt.timezone.utc))})
@@ -122,6 +141,7 @@ def handle(route):
         return reply(None)
     table = path.split("/rest/v1/")[1]
     if table == "project_health": return reply(health())
+    if table == "fin_invoice_totals": return reply(inv_totals())
     rows = DB.setdefault(table, [])
     def match(r):
         for k, v in qs.items():
@@ -152,6 +172,19 @@ def handle(route):
                 if table == "documents": it = {"tags": [], "deleted_at": None, "category": "other", **it}
                 if table == "weekly_reviews" and "on_conflict" in qs: rows[:] = [r for r in rows if r["week_start"] != it["week_start"]]
             if table == "push_subscriptions": rows[:] = [r for r in rows if r.get("endpoint") != it.get("endpoint")]
+            if "on_conflict" in qs:
+                keys = qs["on_conflict"][0].split(","); rows[:] = [r for r in rows if any(r.get(k) != it.get(k) for k in keys)]
+            if table == "fin_entities":
+                it = {"lock_date": None, "archived": False, "fiscal_year_start": 1, "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, **it}
+                DB["fin_members"].append({"entity_id": it["id"], "user_id": ME, "role": "owner"}); DB["fin_accounts"].extend(seed_accounts(it["id"]))
+            if table == "fin_journals": it = {"status": "draft", "number": None, "source": "manual", "reversed_by": None, "reversal_of": None, **it}
+            if table == "fin_lines":
+                j = next(x for x in DB["fin_journals"] if x["id"] == it["journal_id"])
+                if j["status"] == "posted": return err("posted_immutable: lines of a posted entry can't be changed")
+                it = {"debit": 0, "credit": 0, "party_id": None, "statement_line_id": None, "sort": 0, **it, "entity_id": j["entity_id"]}
+            if table == "fin_invoices": it = {"status": "draft", "number": None, "journal_id": None, "task_id": None, "due_date": None, **it}
+            if table == "fin_invoice_lines": it = {"item_id": None, "account_id": None, **it, "amount": round(float(it["qty"]) * float(it["unit_price"]), 2)}
+            if table == "fin_statement_lines": it = {"status": "unmatched", "matched_line_id": None, "reference": None, **it}
             rows.append(it); out.append(it)
         return reply(out[0] if single else out, 201)
     if req.method == "PATCH":
@@ -170,6 +203,64 @@ def handle(route):
         rows[:] = [r for r in rows if not match(r)]
         return reply([])
     reply([])
+
+class FinError(Exception): pass
+def today_qa(): return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3)).date().isoformat()
+def inv_totals():
+    out = []
+    for i in DB["fin_invoices"]:
+        total = round(sum(l["amount"] for l in DB["fin_invoice_lines"] if l["invoice_id"] == i["id"]), 2)
+        paid = round(sum(a["amount"] for a in DB["fin_allocations"] if a["invoice_id"] == i["id"] and next((p for p in DB["fin_payments"] if p["id"] == a["payment_id"] and p["status"] == "posted"), None)), 2)
+        out.append({"invoice_id": i["id"], "entity_id": i["entity_id"], "total": total, "paid": paid})
+    return out
+def sys_acc(eid, key): return next(a["id"] for a in DB["fin_accounts"] if a["entity_id"] == eid and a["system_key"] == key)
+def next_no(eid, field):
+    e = next(x for x in DB["fin_entities"] if x["id"] == eid); n = e[field]; e[field] += 1; return n
+def sys_journal(eid, date, memo, source, source_id, lines):
+    dr = round(sum(l.get("debit", 0) for l in lines), 2); cr = round(sum(l.get("credit", 0) for l in lines), 2)
+    if dr != cr or dr == 0: raise FinError(f"unbalanced: {dr} / {cr}")
+    jid = str(uuid.uuid4())
+    DB["fin_journals"].append({"id": jid, "entity_id": eid, "number": next_no(eid, "next_journal_no"), "entry_date": date, "memo": memo, "reference": None, "source": source, "source_id": source_id,
+                               "status": "posted", "reversal_of": None, "reversed_by": None, "posted_by": ME, "created_by": ME, "created_at": iso(now)})
+    for i, l in enumerate(lines):
+        DB["fin_lines"].append({"id": str(uuid.uuid4()), "journal_id": jid, "entity_id": eid, "account_id": l["account_id"], "party_id": l.get("party_id"), "description": l.get("description"),
+                                "debit": l.get("debit", 0), "credit": l.get("credit", 0), "statement_line_id": None, "sort": i})
+    return jid
+def fin_rpc(fn, b):
+    if fn == "fin_post_journal":
+        j = next(x for x in DB["fin_journals"] if x["id"] == b["p_journal"]); ls = [l for l in DB["fin_lines"] if l["journal_id"] == j["id"]]
+        dr = round(sum(float(l["debit"]) for l in ls), 2); cr = round(sum(float(l["credit"]) for l in ls), 2)
+        if len(ls) < 2: raise FinError("too_few_lines: an entry needs at least two lines")
+        if dr != cr: raise FinError(f"unbalanced: debits ({dr}) and credits ({cr}) must be equal")
+        j["status"] = "posted"; j["number"] = next_no(j["entity_id"], "next_journal_no"); return j["number"]
+    if fn == "fin_post_invoice":
+        i = next(x for x in DB["fin_invoices"] if x["id"] == b["p_invoice"])
+        if not i.get("party_id"): raise FinError("party_required: choose the customer")
+        ls = [l for l in DB["fin_invoice_lines"] if l["invoice_id"] == i["id"]]; total = round(sum(l["amount"] for l in ls), 2)
+        sale = i["kind"] == "sale"
+        jl = [{"account_id": l["account_id"] or sys_acc(i["entity_id"], "sales"), "description": l["description"], ("credit" if sale else "debit"): l["amount"]} for l in ls]
+        jl.append({"account_id": sys_acc(i["entity_id"], "ar" if sale else "ap"), "party_id": i["party_id"], ("debit" if sale else "credit"): total})
+        no = ("INV-" if sale else "BILL-") + str(next_no(i["entity_id"], "next_invoice_no" if sale else "next_bill_no")).zfill(4)
+        i["journal_id"] = sys_journal(i["entity_id"], i["issue_date"], ("Invoice " if sale else "Bill ") + no, "invoice" if sale else "bill", i["id"], jl)
+        i["status"] = "posted"; i["number"] = no; return no
+    if fn == "fin_record_payment":
+        eid, amt = b["p_entity"], float(b["p_amount"]); tot = {t["invoice_id"]: t for t in inv_totals()}
+        for a in b["p_allocations"]:
+            t = tot[a["invoice_id"]]
+            if float(a["amount"]) > t["total"] - t["paid"]: raise FinError("overpayment: more than outstanding")
+        pid = str(uuid.uuid4()); inn = b["p_direction"] == "in"
+        DB["fin_payments"].append({"id": pid, "entity_id": eid, "direction": b["p_direction"], "party_id": b["p_party"], "pay_date": b["p_date"], "amount": amt, "account_id": b["p_account"],
+                                   "reference": b["p_reference"], "memo": b["p_memo"], "status": "posted", "journal_id": None, "created_at": iso(now)})
+        jid = sys_journal(eid, b["p_date"], "Payment received" if inn else "Payment made", "payment", pid,
+            [{"account_id": b["p_account"], ("debit" if inn else "credit"): amt}, {"account_id": sys_acc(eid, "ar" if inn else "ap"), "party_id": b["p_party"], ("credit" if inn else "debit"): amt}])
+        DB["fin_payments"][-1]["journal_id"] = jid
+        for a in b["p_allocations"]: DB["fin_allocations"].append({"payment_id": pid, "invoice_id": a["invoice_id"], "entity_id": eid, "amount": float(a["amount"])})
+        return pid
+    if fn == "fin_match_statement":
+        st = next(x for x in DB["fin_statement_lines"] if x["id"] == b["p_statement"]); l = next(x for x in DB["fin_lines"] if x["id"] == b["p_line"])
+        if round(float(l["debit"]) - float(l["credit"]), 2) != round(float(st["amount"]), 2): raise FinError("amount_mismatch")
+        st["status"] = "matched"; st["matched_line_id"] = l["id"]; l["statement_line_id"] = st["id"]; return None
+    raise FinError("not implemented in test fake: " + fn)
 
 results, errors = [], []
 def check(name, cond, detail=""):
@@ -289,11 +380,11 @@ with sync_playwright() as pw:
     shot(page, "05-calendar")
     page.goto(BASE + "/#/search"); page.fill("#global-q", "container"); page.wait_for_selector(".srow", timeout=4000)
     check("search returns matching task", "Book container" in page.inner_text("#searchResults"))
-    page.goto(BASE + "/#/finance"); page.wait_for_selector(".planned")
-    check("finance page is honest about not being built", "Not built yet" in page.inner_text("#view"))
+    page.goto(BASE + "/#/finance"); page.wait_for_selector(".fin-card", timeout=8000)
+    check("finance page opens the books list", page.locator(".fin-card").count() >= 1)
 
     # ---------- Phase 2: notes, meetings, decisions ----------
-    check("goals, notes and reports are no longer marked 'coming soon'", page.locator(".sidenav nav a.soon").count() == 1)
+    check("goals, notes and reports are no longer marked 'coming soon'", page.locator(".sidenav nav a.soon").count() == 0)
     page.goto(BASE + "/#/notes/meetings"); page.wait_for_selector(".empty")
     page.click('.page-head [data-act="new-note"]'); page.wait_for_selector("#noteForm")
     page.select_option("#nf-ws", WS[1])
@@ -389,6 +480,86 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/search"); page.fill("#global-q", "logistics review"); page.wait_for_selector(".srow", timeout=4000)
     page.wait_for_timeout(600); check("search returns notes", "weekly logistics review" in page.inner_text("#searchResults").lower(), page.inner_text("#searchResults")[:200])
 
+    # ---------- Phase 3: finance ----------
+    check("finance is no longer marked 'coming soon'", page.locator(".sidenav nav a.soon").count() == 0)
+    page.goto(BASE + "/#/finance"); page.wait_for_selector(".fin-card", timeout=8000)
+    check("finance home lists each set of books", page.locator(".fin-card").count() == 2)
+    check("combined view states the management rate", "26.1 INR = 1 QAR" in page.inner_text("#view"))
+    page.click(f'a.fin-card[href="#/finance/{FE1}/overview"]'); page.wait_for_selector(".getting-started")
+    check("empty books show getting-started steps, not invented figures", "Opening balances" in page.inner_text(".getting-started"))
+    page.click('.getting-started [data-act="fin-opening"]'); page.wait_for_selector("#finOpening")
+    page.fill(f'input[name="ob-{FE1[:8]}-acc-1010"]', "10000"); page.click('#finOpening button[type="submit"]'); page.wait_for_selector("#finJournal")
+    check("opening balances prepared as a balanced entry for review", "Balanced" in page.inner_text("#fj-problems"))
+    page.click('#finJournal [data-post="1"]'); page.wait_for_timeout(700)
+    ob = [j for j in DB["fin_journals"] if j["source"] == "opening"]
+    obl = [l for l in DB["fin_lines"] if ob and l["journal_id"] == ob[0]["id"]]
+    check("opening entry posted: bank Dr 10,000 / opening equity Cr 10,000", ob and ob[0]["status"] == "posted" and sorted((float(l["debit"]), float(l["credit"])) for l in obl) == [(0, 10000), (10000, 0)], str(obl))
+    page.wait_for_selector(".tiles")
+    page.click('[data-act="fin-quick"][data-kind="expense"]'); page.wait_for_selector("#finQuick")
+    page.fill("#fq-amt", "800"); page.select_option("#fq-money", f"{FE1[:8]}-acc-1010"); page.select_option("#fq-cat", f"{FE1[:8]}-acc-6000"); page.fill("#fq-memo", "October shop rent")
+    page.click('#finQuick [data-post="1"]'); page.wait_for_timeout(700)
+    check("quick expense posts a 2-line entry", any(j["memo"] == "October shop rent" and j["status"] == "posted" for j in DB["fin_journals"]))
+    page.wait_for_selector(".tiles")
+    check("overview shows cash & bank from the ledger (9,200)", "QAR 9,200.00" in page.inner_text(".tiles"))
+    # unbalanced entry is refused
+    page.click('.page-head [data-act="fin-new-entry"]'); page.wait_for_selector("#finJournal")
+    page.fill("#fj-memo", "Test unbalanced")
+    page.select_option('[data-jl="0"][data-f="account_id"]', f"{FE1[:8]}-acc-6900"); page.fill('[data-jl="0"][data-f="debit"]', "100")
+    page.select_option('[data-jl="1"][data-f="account_id"]', f"{FE1[:8]}-acc-1000"); page.fill('[data-jl="1"][data-f="credit"]', "90")
+    check("editor shows the difference live", "differ" in page.inner_text("#fj-problems"))
+    page.click('#finJournal [data-post="1"]'); page.wait_for_selector(".toast.error")
+    check("unbalanced entry is not saved or posted", not any(j["memo"] == "Test unbalanced" for j in DB["fin_journals"]))
+    page.keyboard.press("Escape")
+    # customer + invoice + part payment
+    page.goto(BASE + f"/#/finance/{FE1}/people"); page.wait_for_selector(".fin-tabs")
+    page.click('.filters [data-act="fin-party"]'); page.fill("#fpa-name", "Al Noor Tailoring"); page.click("#fpaSave"); page.wait_for_timeout(500)
+    check("customer added to these books", any(p["name"] == "Al Noor Tailoring" and p["entity_id"] == FE1 for p in DB["fin_parties"]))
+    page.goto(BASE + f"/#/finance/{FE1}/invoices"); page.click('[data-act="fin-new-invoice"]'); page.wait_for_selector("#finInvoice")
+    cust = next(p["id"] for p in DB["fin_parties"] if p["name"] == "Al Noor Tailoring")
+    page.select_option("#fi-party", cust); page.fill('[data-il="0"][data-f="description"]', "Bespoke suit"); page.fill('[data-il="0"][data-f="qty"]', "2"); page.fill('[data-il="0"][data-f="unit_price"]', "750")
+    page.locator('[data-il="0"][data-f="unit_price"]').dispatch_event("change"); page.wait_for_timeout(200)
+    check("invoice total calculates as you type (1,500)", "1,500.00" in page.inner_text("#fi-total"), page.inner_text("#fi-total") + " / " + str(page.evaluate("[...document.querySelectorAll(\"[data-il]\")].map(x=>x.dataset.f+\"=\"+x.value).join(\",\")")))
+    check("due date is left empty unless you set it", page.input_value("#fi-due") == "")
+    page.click('#finInvoice [data-post="1"]'); page.wait_for_timeout(800)
+    inv = next((i for i in DB["fin_invoices"] if i["entity_id"] == FE1), None)
+    check("invoice posted as INV-0001 with its journal", inv and inv["status"] == "posted" and inv["number"] == "INV-0001" and inv["journal_id"], str(inv))
+    page.click(f'[data-act="fin-open-invoice"][data-id="{inv["id"]}"]'); page.wait_for_selector(".inv-head")
+    page.click('[data-act="fin-pay"][data-invoice]'); page.wait_for_selector("#finPayment")
+    check("payment form pre-fills the outstanding amount", page.input_value("#fp-amt") == "1500")
+    page.fill("#fp-amt", "1000"); page.fill(f'[data-alloc="{inv["id"]}"]', "1000"); page.fill("#fp-ref", "TT-0091"); page.click("#fpSave"); page.wait_for_timeout(800)
+    check("part payment recorded and applied", any(a["invoice_id"] == inv["id"] and a["amount"] == 1000 for a in DB["fin_allocations"]))
+    page.goto(BASE + f"/#/finance/{FE1}/invoices"); page.wait_for_selector(".list")
+    check("invoice shows Part paid with 500 left", "Part paid" in page.inner_text(".list") and "500.00 left" in page.inner_text(".list"))
+    # reports
+    page.goto(BASE + f"/#/finance/{FE1}/reports"); page.wait_for_selector(".fin-report")
+    t = page.inner_text(".fin-report")
+    check("P&L from posted entries: income 1,500, expenses 800, profit 700", "1,500.00" in t and "800.00" in t and "700.00" in t, t[:400])
+    page.select_option("#fr-report", "bs"); page.wait_for_selector(".fin-report")
+    check("balance sheet balances", "Balances: assets = liabilities + equity" in page.inner_text(".fin-report"))
+    page.select_option("#fr-report", "tb"); page.wait_for_selector(".fin-report")
+    check("trial balance: debits equal credits", "Debits equal credits" in page.inner_text(".fin-report"))
+    with page.expect_download() as dl: page.click('[data-act="fin-csv"]')
+    check("report CSV downloads", open(dl.value.path(), encoding="utf-8-sig").read().startswith("Account,Debit,Credit"))
+    shot(page, "14-finance-report", True)
+    # bank statement import and match
+    page.goto(BASE + f"/#/finance/{FE1}/banking"); page.wait_for_selector(".fin-tabs")
+    d = dt.date.fromisoformat(today_qa()).strftime("%d/%m/%Y")
+    page.set_input_files("#fb-file", files=[{"name": "qnb.csv", "mimeType": "text/csv", "buffer": f"Account,QNB 0123\nDate,Description,Debit,Credit\n{d},TT AL NOOR,,1000.00\n{d},BANK CHARGE,15.00,\n".encode()}])
+    page.wait_for_selector('[data-act="fin-import-go"]')
+    check("statement preview reads 2 lines, day-first dates", "2 lines read" in page.inner_text("#sheet"))
+    page.click('[data-act="fin-import-go"]'); page.wait_for_timeout(800)
+    check("statement lines imported as unmatched", sum(1 for x in DB["fin_statement_lines"] if x["status"] == "unmatched") == 2)
+    page.wait_for_selector('[data-act="fin-match"]', timeout=5000)
+    page.click('[data-act="fin-match"]'); page.wait_for_timeout(700)
+    check("bank line matched to the customer payment", any(x["status"] == "matched" and x["amount"] == 1000 for x in DB["fin_statement_lines"]))
+    shot(page, "15-banking")
+    # budget
+    page.goto(BASE + f"/#/finance/{FE1}/budgets"); page.wait_for_selector("#budgetForm")
+    page.fill(f'input[name="b-{FE1[:8]}-acc-6000"]', "1000"); page.click("#budgetSave"); page.wait_for_timeout(500)
+    check("budget saved separately from actuals", any(b["account_id"] == f"{FE1[:8]}-acc-6000" and b["amount"] == 1000 for b in DB["fin_budgets"]))
+    page.goto(BASE + f"/#/finance/{FE1}/overview"); page.wait_for_selector(".tiles")
+    shot(page, "16-finance-overview", True)
+
     # Settings: hide a dashboard section persists to profile prefs
     page.goto(BASE + "/#/settings"); page.wait_for_selector(".settings")
     page.uncheck('[data-act="toggle-section"][data-k="activity"]'); page.wait_for_timeout(300)
@@ -413,7 +584,7 @@ with sync_playwright() as pw:
             shot(page, "08-tasks-phone", True)
             page.click('.trow[data-id="t-wait"]'); page.wait_for_selector("#tf-title"); shot(page, "09-task-phone")
             page.keyboard.press("Escape")
-            for route_ in ["goals/habits", "reports/weekly", "notes/decisions", "reports/projects"]:
+            for route_ in ["goals/habits", "reports/weekly", "notes/decisions", "reports/projects", f"finance/{FE1}/overview", f"finance/{FE1}/reports", f"finance/{FE1}/invoices"]:
                 page.goto(BASE + "/#/" + route_); page.wait_for_selector(".viewtabs")
                 check(f"phone: no horizontal scroll on {route_}", not page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"))
             shot(page, "13-projects-report-phone", True)
