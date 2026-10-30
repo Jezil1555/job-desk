@@ -16,10 +16,11 @@ Separate tables with their own lifecycle: `workspaces`, `projects`, `tasks` (sub
 - Changing project never changes people; moving workspace keeps people only if they're members there.
 - Tests: 19 live DB checks (rolled back), rollback script verified locally (schema identical after undo), 1 unit, 7 browser checks.
 
-## 3. Commitment tracking — Partial
-- Met: responsible person/organisation (`contact_id` / `counterpart`), expected date, last contact, next follow-up, escalation date and status,
-  contact log; completing a linked task does **not** close the follow-up.
-- Gap: separate fields for **what is expected**, **actual response** and **outcome**; internal/external flag.
+## 3. Commitment tracking — Met (increment 2, 30 Oct)
+Responsible person/organisation, internal/external, what exactly is expected, expected date, last contact, next follow-up, escalation date and status,
+actual response (text + date), and an outcome (fulfilled / partly / not fulfilled / renegotiated / no longer needed) that must be recorded to close;
+cancelling needs a reason. Reopening clears the outcome (kept in history). Completing a related task never closes a commitment.
+Tests: 12 live DB checks (rolled back), rollback verified locally, 4 browser checks.
 
 ## 4. Financial ledger integrity — Met (FX partial)
 Chart of accounts, journal headers/lines, balance check on posting, posting controls, lock date, reversals, payment allocations, AR/AP subledgers,
@@ -63,7 +64,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 
 ## Proposed increments (one at a time, each fully tested before deploy)
 1. ~~Task accountability~~ — done.
-2. **Commitments** — expected / response / outcome fields, internal-external flag, outcome required to close.
+2. ~~Commitments~~ — done.
 3. **Project baselines** — baseline dates on projects and milestones, revision log with reason, slip report.
 4. **AI proposal log** — every AI suggestion recorded with accept / edit / reject.
 5. **Notification reliability** — delivery log, retry with backoff, snooze.

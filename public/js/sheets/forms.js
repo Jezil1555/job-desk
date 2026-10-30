@@ -97,11 +97,12 @@ async function submitMilestone() {
 
 /* ======================= Follow-ups ======================= */
 export function openFollowUp(id, ctx = {}) {
-  f.kind = "followup"; f.id = id || null; f.ctx = ctx; f.logs = null;
+  f.kind = "followup"; f.id = id || null; f.ctx = ctx; f.logs = null; f.closing = null;
   if (id && !followUpById(id)) { toastError("That follow-up isn't available."); return; }
   openSheet(renderFollowUp, { wide: !!id });
   if (id) sb.from("follow_up_logs").select("*").eq("follow_up_id", id).order("contacted_at", { ascending: false }).then(({ data }) => { if (f.id === id) { f.logs = data || []; rerenderSheet(); } });
 }
+const OUTCOME_LABEL = { fulfilled: "Fulfilled", partly_fulfilled: "Partly fulfilled", not_fulfilled: "Not fulfilled", renegotiated: "Renegotiated", no_longer_needed: "No longer needed" };
 function renderFollowUp(sh) {
   const tz = state.tz;
   const x = f.id ? followUpById(f.id) : { subject: "", direction: "they_owe", status: "open", workspace_id: f.ctx.workspace_id || state.prefs.last_ws || (activeWorkspaces()[0] || {}).id, task_id: f.ctx.task_id || null, project_id: f.ctx.project_id || null, owner_id: state.user.id, counterpart: f.ctx.counterpart || "", ...(f.ctx.draft || {}) };
@@ -114,7 +115,9 @@ function renderFollowUp(sh) {
   const ro = w ? "" : "disabled";
   sh.innerHTML = sheetHead(f.id ? "Follow-up" : "New follow-up", f.id ? `${esc((wsById(x.workspace_id) || {}).name || "")} · ${x.status === "escalated" ? '<span class="warn-text">Escalated</span>' : x.status}` : "Track what someone owes you, or what you owe them.") + `
   <form id="fuForm" class="sh-body" novalidate>
-    <label class="field"><span>What was requested or promised</span><input class="input" id="fu-subject" value="${esc(x.subject)}" ${ro} autofocus placeholder="e.g. Revised dispatch date and recovery plan"></label>
+    <label class="field"><span>Commitment</span><input class="input" id="fu-subject" value="${esc(x.subject)}" ${ro} autofocus placeholder="e.g. Revised dispatch date and recovery plan"></label>
+    <label class="field"><span>What exactly is expected <small>(deliverable, document, decision)</small></span><textarea class="input" id="fu-expectation" rows="2" ${ro} placeholder="e.g. Written revised dispatch date with a recovery plan for the 3 delayed racks">${esc(x.expectation || "")}</textarea></label>
+    <label class="field inline"><span>Type</span><select class="input" id="fu-type" ${ro}><option value="external" ${x.commitment_type !== "internal" ? "selected" : ""}>External (supplier, client, authority)</option><option value="internal" ${x.commitment_type === "internal" ? "selected" : ""}>Internal (colleague, team)</option></select></label>
     <div class="seg2" role="radiogroup" aria-label="Direction">
       <label class="${x.direction === "they_owe" ? "on" : ""}"><input type="radio" name="fu-dir" value="they_owe" ${x.direction === "they_owe" ? "checked" : ""} ${ro}><b>They owe me</b><small>Awaiting their response</small></label>
       <label class="${x.direction === "i_owe" ? "on" : ""}"><input type="radio" name="fu-dir" value="i_owe" ${x.direction === "i_owe" ? "checked" : ""} ${ro}><b>I owe them</b><small>My commitment</small></label>
@@ -132,10 +135,19 @@ function renderFollowUp(sh) {
       <label class="field"><span>Responsible</span><select class="input" id="fu-owner" ${ro}>${membersOf(x.workspace_id).map(m => opt(m.user_id, x.owner_id || "", nameOf(m.user_id))).join("")}</select></label>
       <label class="field"><span>Supporting email / document link</span><input class="input" id="fu-doc" type="url" value="${esc(x.document_url || "")}" placeholder="https://…" ${ro}></label>
     </div>
+    ${f.id ? `<fieldset class="group"><legend>Actual response</legend><div class="grid2">
+      <label class="field"><span>What they said or delivered</span><textarea class="input" id="fu-response" rows="2" ${ro}>${esc(x.response || "")}</textarea></label>
+      <label class="field"><span>Received on</span><input class="input" type="date" id="fu-response-at" value="${x.response_at || ""}" max="${todayISO(tz)}" ${ro}></label></div></fieldset>` : ""}
+    ${x.outcome ? `<div class="banner ${x.outcome === "fulfilled" ? "ok" : x.outcome === "not_fulfilled" ? "bad" : "info"}"><b>Outcome: ${OUTCOME_LABEL[x.outcome]}</b>${x.outcome_note ? ` — ${esc(x.outcome_note)}` : ""}</div>` : ""}
+    ${f.closing ? `<fieldset class="group" id="fu-close-panel"><legend>${f.closing === "cancel" ? "Cancel commitment" : "Close commitment"}</legend>
+      ${f.closing === "close" ? `<label class="field"><span>Outcome</span><select class="input" id="fu-outcome"><option value="">Choose…</option>${Object.entries(OUTCOME_LABEL).filter(([k]) => k !== "no_longer_needed").map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}<option value="no_longer_needed">${OUTCOME_LABEL.no_longer_needed}</option></select></label>` : ""}
+      <label class="field"><span>${f.closing === "cancel" ? "Why is it cancelled?" : "Outcome note"}</span><input class="input" id="fu-outcome-note" placeholder="${f.closing === "cancel" ? "e.g. Order cancelled by client" : "e.g. New date agreed: 12 Nov"}"></label>
+      <div class="btnrow"><button type="button" class="btn primary" data-act="fu-close-confirm" data-id="${x.id}">${f.closing === "cancel" ? "Cancel commitment" : "Close with this outcome"}</button><button type="button" class="btn" data-act="fu-close-back">Back</button></div>
+      <p class="hint">Completing a related task never closes a commitment — it stays open until you record what actually happened.</p></fieldset>` : ""}
     <label class="field"><span>Notes</span><textarea class="input" id="fu-notes" rows="2" ${ro}>${esc(x.notes || "")}</textarea></label>
     <p class="hint">Reminders fire once at the next follow-up time. On the escalation date the item is marked Escalated and you're alerted. Nothing is ever sent to the other party automatically.</p>
     ${w ? `<div class="sheet-foot"><button class="btn primary" type="submit" id="fuSave">${f.id ? "Save" : "Create follow-up"}</button>
-      ${f.id && ["open", "escalated"].includes(x.status) ? `<button type="button" class="btn" data-act="fu-close" data-id="${x.id}">${ICON.check}Close (resolved)</button>` : ""}
+      ${f.id && ["open", "escalated"].includes(x.status) && !f.closing ? `<button type="button" class="btn" data-act="fu-close" data-id="${x.id}">${ICON.check}Close…</button><button type="button" class="btn" data-act="fu-cancel" data-id="${x.id}">Cancel…</button>` : ""}
       ${f.id && ["closed", "cancelled"].includes(x.status) ? `<button type="button" class="btn" data-act="fu-reopen" data-id="${x.id}">Reopen</button>` : ""}
       ${f.id && x.status === "open" ? `<button type="button" class="btn" data-act="fu-escalate" data-id="${x.id}">Escalate now</button>` : ""}
       ${f.id && ["open", "escalated"].includes(x.status) ? `<button type="button" class="btn" data-act="draft-msg" data-kind="followup" data-id="${x.id}">✉ Draft message</button>` : ""}</div>` : ""}
@@ -157,8 +169,10 @@ function readFollowUp() {
     last_contact_at: val("fu-last") || null, expected_at: val("fu-expected") || null,
     next_follow_up_at: nd ? zonedToISO(nd, nt || "09:00", state.tz) : null, escalate_at: val("fu-escalate") || null,
     task_id: val("fu-task") || null, project_id: val("fu-project") || null, owner_id: val("fu-owner") || null,
-    document_url: val("fu-doc") || null, notes: val("fu-notes") || null
+    document_url: val("fu-doc") || null, notes: val("fu-notes") || null,
+    expectation: val("fu-expectation") || null, commitment_type: val("fu-type") || "external"
   };
+  if ($("fu-response")) { row.response = val("fu-response") || null; row.response_at = val("fu-response-at") || null; }
   if (!f.id) row.workspace_id = val("fu-ws");
   return row;
 }
@@ -293,7 +307,17 @@ export async function handleFormClick(act, el) {
       const r = await run(sb.from("milestones").delete().eq("id", id)); if (r.error) return toastError(r.error), true;
       state.milestones = state.milestones.filter(m => m.id !== id); refreshHealthSoon(); closeSheet(); toast("Milestone deleted"); return true;
     }
-    case "fu-close": await setFollowUpStatus(id, "closed"); return true;
+    case "fu-close": f.closing = "close"; rerenderSheet(); setTimeout(() => $("fu-outcome") && $("fu-outcome").focus(), 30); return true;
+    case "fu-cancel": f.closing = "cancel"; rerenderSheet(); setTimeout(() => $("fu-outcome-note") && $("fu-outcome-note").focus(), 30); return true;
+    case "fu-close-back": f.closing = null; rerenderSheet(); return true;
+    case "fu-close-confirm": {
+      const cancel = f.closing === "cancel", outcome = cancel ? "no_longer_needed" : val("fu-outcome"), note = val("fu-outcome-note");
+      if (!outcome) return toastError("Choose the outcome."), true;
+      if (cancel && note.length < 3) return toastError("Say why it's cancelled."), true;
+      const patch = { ...readFollowUp(), status: cancel ? "cancelled" : "closed", outcome, outcome_note: note || null }; delete patch.workspace_id;
+      const r = await run(sb.from("follow_ups").update(patch).eq("id", id).select().single());
+      if (r.error) return toastError(r.error), true;
+      f.closing = null; Object.assign(followUpById(id), r.data); rerenderSheet(); toast(cancel ? "Commitment cancelled" : "Commitment closed"); return true; }
     case "fu-reopen": await setFollowUpStatus(id, "open"); return true;
     case "fu-escalate": await setFollowUpStatus(id, "escalated"); return true;
     case "ws-remove": {

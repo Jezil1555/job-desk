@@ -43,3 +43,5 @@ create trigger tasks_after_write after insert or update on public.tasks for each
 create trigger follow_ups_before_write before insert or update on public.follow_ups for each row execute function public.follow_ups_before_write();
 create function public.reopen_task(p_task uuid, p_reason text, p_status text default 'in_progress') returns void language plpgsql as $$
 begin perform set_config('app.reopen_reason', trim(p_reason), true); update public.tasks set status = p_status where id = p_task; end $$;
+create schema if not exists private;
+create table if not exists private.migration_snapshots (migration text not null, object text not null, definition text not null, saved_at timestamptz not null default now(), primary key (migration, object));

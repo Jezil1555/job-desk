@@ -230,6 +230,8 @@ def handle(route):
         for r in rows:
             if match(r):
                 new = {**r, **body}
+                if table == "follow_ups" and new.get("status") == "closed" and r.get("status") != "closed" and not new.get("outcome"):
+                    return err("outcome_required: record the outcome before closing")
                 if table == "tasks":
                     e = rule_check(new, r)
                     if e: return err(e)
@@ -844,6 +846,21 @@ with sync_playwright() as pw:
     rv["review_status"] = "requested"; page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector(".tiles"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]'); page.click('[data-act="review-approve"]'); page.wait_for_timeout(500)
     check("reviewer approval completes the task", rv.get("status") == "completed" and rv.get("review_status") == "approved")
     shot(page, "25-task-review")
+    ctx.close()
+
+
+    # ---------- Increment 2: commitments need an outcome to close ----------
+    ctx, page = new_page(b, 1366, 900)
+    page.goto(BASE + "/#/followups"); page.wait_for_selector('[data-act="open-followup"][data-id="f-1"]'); page.click('[data-act="open-followup"][data-id="f-1"]'); page.wait_for_selector("#fu-expectation")
+    check("commitment form asks what exactly is expected and its type", page.locator("#fu-type").count() == 1 and page.locator("#fu-response").count() == 1)
+    page.fill("#fu-expectation", "Written revised dispatch date and recovery plan"); page.fill("#fu-response", "Supplier confirmed 12 Nov, partial shipment"); page.click("#fuSave"); page.wait_for_timeout(500)
+    f1 = next(x for x in DB["follow_ups"] if x["id"] == "f-1")
+    check("expectation and actual response saved", f1.get("expectation", "").startswith("Written revised") and f1.get("response", "").startswith("Supplier confirmed"))
+    page.click('[data-act="fu-close"]'); page.wait_for_selector("#fu-close-panel"); page.click('[data-act="fu-close-confirm"]'); page.wait_for_timeout(200)
+    check("closing without an outcome is refused", f1["status"] != "closed" and "outcome" in page.inner_text("#toast").lower())
+    page.select_option("#fu-outcome", "renegotiated"); page.fill("#fu-outcome-note", "New date agreed: 12 Nov"); page.click('[data-act="fu-close-confirm"]'); page.wait_for_timeout(500)
+    check("closed with the recorded outcome", f1["status"] == "closed" and f1.get("outcome") == "renegotiated" and "Renegotiated" in page.inner_text("#sheet"))
+    shot(page, "26-commitment-outcome")
     ctx.close()
 
     # ---------- phone, light + dark ----------
