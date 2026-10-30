@@ -28,10 +28,13 @@ per-entity isolation, bank reconciliation, inventory accounting, audit history. 
 Tests prove the trial balance balances and invoice/payment flows don't double-count (phase3 tests, 73 checks).
 - Partial: foreign currency. Each set of books has one base currency; lines carry `fx_currency`/`fx_amount`, but there are no FX invoices, revaluation or realised gain/loss.
 
-## 5. Entity separation — Partial
-- Met: Personal, Dlusso, Fitness Hub and Burgery are separate books; cross-book account use is rejected; nothing auto-treats a transfer as income/expense.
-- Met for one case: partner accounts (Jezz ↔ Dlusso) post matching entries in both books with references and a two-book check.
-- Gap: a general **inter-entity transaction** (e.g. Dlusso ↔ Fitness Hub loan) with due-to/due-from accounts and a matching check.
+## 5. Entity separation — Met (increment 6, 31 Oct)
+Personal, Dlusso, Fitness Hub and Burgery are separate books; cross-book account use is rejected; nothing auto-treats a transfer as income/expense.
+Inter-entity transactions (`fin_ic_txns`, Finance → Inter-entity): transfer, paid-on-behalf or recharge between any two books you keep, posted in BOTH books
+in one step with the same IC number, via one "Inter-entity current accounts" account per book tagged by counterparty. Different currencies need the amount
+each side actually recorded (no assumed rate). Reversal reverses both sides. `fin_ic_position` checks each book's balance against the other book and the
+recorded transactions (Matched / Mismatch). Partner accounts (Jezz ↔ Dlusso) remain as built.
+Tests: 21 checks run both locally and live (rolled back), rollback verified locally, 4 browser checks.
 
 ## 6. Inventory and costing — Partial
 - Met: stock moves are separate from cash, average cost, auditable move history, negative stock is refused.
@@ -76,7 +79,7 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 3. ~~Project baselines~~ — done.
 4. ~~AI proposal log~~ — done.
 5. ~~Notification reliability~~ — done.
-6. **Inter-entity transactions** — due-to / due-from between any two books, matching check.
+6. ~~Inter-entity transactions~~ — done.
 7. **Dlusso production costing** — goods received, consumption to WIP, finished-order cost, authorised negative-stock exception.
 8. **Foreign currency** — FX invoices/bills, realised gain/loss, month-end revaluation.
 9. **Templates and project-specific fields** on the shared task engine.

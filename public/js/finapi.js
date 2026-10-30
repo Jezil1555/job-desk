@@ -9,6 +9,7 @@ export const fin = {
   entities: [], members: [], accounts: [], parties: [], journals: [], lines: [], invoices: [], invLines: [], totals: new Map(),
   payments: [], allocations: [], items: [], moves: [], statement: [], budgets: [], files: [], audit: [],
   plinks: [], ptxns: [], pdocs: [], // partner accounts
+  ictxns: [], // inter-entity transactions
   posted: [] // posted lines with entry_date, recomputed after each load
 };
 const PAGE = 1000;
@@ -25,7 +26,7 @@ export function loadFin(force = false) {
   if (fin.loading && !force) return fin.loading;
   fin.loading = (async () => {
     try {
-      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs] = await Promise.all([
+      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns] = await Promise.all([
         all(() => sb.from("fin_entities").select("*").order("created_at")),
         all(() => sb.from("fin_members").select("entity_id, user_id, role")),
         all(() => sb.from("fin_accounts").select("*").order("code")),
@@ -44,9 +45,10 @@ export function loadFin(force = false) {
         all(() => sb.from("fin_files").select("*").order("created_at", { ascending: false })),
         all(() => sb.from("fin_partner_links").select("*").order("created_at")),
         all(() => sb.from("fin_partner_txns").select("*").order("txn_no")),
-        all(() => sb.from("fin_partner_docs").select("*").order("created_at"))
+        all(() => sb.from("fin_partner_docs").select("*").order("created_at")),
+        all(() => sb.from("fin_ic_txns").select("*").order("txn_date", { ascending: false }))
       ]);
-      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs,
+      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns,
         totals: new Map(totals.map(t => [t.invoice_id, t])), loaded: true, error: null });
       fin.posted = postedLines(lines, journals);
     } catch (e) { fin.error = e; console.error(e); }

@@ -39,7 +39,7 @@ def fin_fixture():
              "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, "created_at": iso(now)}]
     return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
-            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": []}
+            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -351,7 +351,36 @@ def partner_rpc(fn, b):
         t["status"] = "reversed"; t["reversal_reason"] = b["p_reason"]; return None
     if fn == "fin_partner_sync_mirror": return 0
     raise FinError("not implemented in test fake: " + fn)
+def ic_rpc(fn, b):
+    if fn == "fin_ic_record":
+        p = b["p"]; A = next(e for e in DB["fin_entities"] if e["id"] == p["from_entity_id"]); B = next(e for e in DB["fin_entities"] if e["id"] == p["to_entity_id"])
+        if A["base_currency"] != B["base_currency"] and not p.get("amount_to"): raise FinError("amount_to_required: enter the received amount")
+        amt, amt_to = float(p["amount"]), float(p.get("amount_to") or p["amount"])
+        tid = str(uuid.uuid4()); no = "IC-" + str(len(DB["fin_ic_txns"]) + 1).zfill(5)
+        def ic_acc(eid):
+            a = next((x for x in DB["fin_accounts"] if x["entity_id"] == eid and x.get("system_key") == "intercompany"), None)
+            if not a: a = {"id": f"{eid[:8]}-acc-1190", "entity_id": eid, "code": "1190", "name": "Inter-entity current accounts", "type": "asset", "subtype": "other", "system_key": "intercompany", "is_active": True, "description": None}; DB["fin_accounts"].append(a)
+            return a["id"]
+        ja = sys_journal(A["id"], p["txn_date"], no + " " + p["description"], "intercompany", tid, [{"account_id": ic_acc(A["id"]), "debit": amt}, {"account_id": p["from_account_id"], "credit": amt}])
+        jb = sys_journal(B["id"], p["txn_date"], no + " " + p["description"], "intercompany", tid, [{"account_id": p["to_account_id"], "debit": amt_to}, {"account_id": ic_acc(B["id"]), "credit": amt_to}])
+        DB["fin_ic_txns"].append({"id": tid, "ic_no": no, "from_entity_id": A["id"], "to_entity_id": B["id"], "kind": p["kind"], "txn_date": p["txn_date"], "description": p["description"], "reference": p.get("reference"),
+            "amount": amt, "amount_to": amt_to, "from_account_id": p["from_account_id"], "to_account_id": p["to_account_id"], "from_journal_id": ja, "to_journal_id": jb, "status": "posted", "reversal_reason": None, "created_at": iso(now)})
+        return tid
+    if fn == "fin_ic_position":
+        e = b["p_entity"]; out = {}
+        for t in DB["fin_ic_txns"]:
+            if t["status"] != "posted" or e not in (t["from_entity_id"], t["to_entity_id"]): continue
+            o = t["to_entity_id"] if t["from_entity_id"] == e else t["from_entity_id"]; oe = next(x for x in DB["fin_entities"] if x["id"] == o)
+            r_ = out.setdefault(o, {"entity_id": o, "name": oe["name"], "currency": oe["base_currency"], "mine": 0, "theirs": 0, "recorded_mine": 0, "recorded_theirs": 0, "matched": True})
+            if t["from_entity_id"] == e: r_["mine"] += t["amount"]; r_["theirs"] += t["amount_to"]
+            else: r_["mine"] -= t["amount_to"]; r_["theirs"] -= t["amount"]
+            r_["recorded_mine"], r_["recorded_theirs"] = r_["mine"], r_["theirs"]
+        return list(out.values())
+    if fn == "fin_ic_reverse":
+        t = next(x for x in DB["fin_ic_txns"] if x["id"] == b["p_txn"]); t["status"] = "reversed"; t["reversal_reason"] = b["p_reason"]; return None
+    raise FinError("not implemented: " + fn)
 def fin_rpc(fn, b):
+    if fn.startswith("fin_ic_"): return ic_rpc(fn, b)
     if fn.startswith("fin_partner_"): return partner_rpc(fn, b)
     if fn == "fin_post_journal":
         j = next(x for x in DB["fin_journals"] if x["id"] == b["p_journal"]); ls = [l for l in DB["fin_lines"] if l["journal_id"] == j["id"]]
@@ -938,6 +967,26 @@ with sync_playwright() as pw:
     sn = next(x for x in DB["notifications"] if x["id"] == nid)
     check("snooze until tomorrow 9:00 Doha time", (sn.get("snoozed_until") or "").startswith((dt.date.fromisoformat(today_qa()) + dt.timedelta(days=1)).isoformat() + "T06:00"), str(sn.get("snoozed_until")))
     check("snoozed alert moves to the Snoozed list", "snoozed" in page.inner_text("#view").lower() and page.locator(f'.alist [data-id="{nid}"]').count() == 0)
+    ctx.close()
+
+
+    # ---------- Increment 6: inter-entity ----------
+    ctx, page = new_page(b, 1366, 900)
+    page.goto(BASE + f"/#/finance/{FE1}/intercompany"); page.wait_for_selector('[data-act="ic-new"]')
+    page.click('[data-act="ic-new"]'); page.wait_for_selector("#icForm")
+    page.select_option("#ic-to", FE2); page.wait_for_selector("#ic-amt-to")
+    check("different currencies ask for the amount received in the other currency", page.locator("#ic-amt-to").count() == 1)
+    page.fill("#ic-desc", "Start-up funding for India outlet"); page.fill("#ic-amt", "1000")
+    page.select_option("#ic-from-acc", f"{FE1[:8]}-acc-1010"); page.select_option("#ic-to-acc", f"{FE2[:8]}-acc-1010")
+    page.click("#icSave"); page.wait_for_timeout(300)
+    check("missing received amount is caught before posting", len(DB["fin_ic_txns"]) == 0 and "other currency" in page.inner_text("#toast"))
+    page.fill("#ic-amt-to", "22850"); page.click("#icSave"); page.wait_for_timeout(900)
+    t_ = DB["fin_ic_txns"][0] if DB["fin_ic_txns"] else {}
+    check("posted in both books with one IC number", t_.get("amount") == 1000 and t_.get("amount_to") == 22850 and t_.get("from_journal_id") and t_.get("to_journal_id")
+          and any(j["id"] == t_["to_journal_id"] and j["entity_id"] == FE2 for j in DB["fin_journals"]))
+    page.wait_for_selector("#ic-pos .rtable"); page.wait_for_timeout(300)
+    check("balances table shows the other books and 'Matched'", "The Burgery Thrissur" in page.inner_text("#ic-pos") and "matched" in page.inner_text("#ic-pos").lower())
+    shot(page, "28-intercompany", True)
     ctx.close()
 
     # ---------- phone, light + dark ----------

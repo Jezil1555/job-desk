@@ -14,6 +14,7 @@ import { renderReports, handleReportsClick, handleReportsChange, handleReportsSu
 import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
 import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
 import { loadFin, fin } from "./finapi.js";
+import { handleIcClick, handleIcChange, handleIcSubmit } from "./views/intercompany.js";
 import { handlePartnerClick, handlePartnerChange, handlePartnerInput, handlePartnerSubmit } from "./sheets/partnerforms.js";
 import { openDraft, handleAssistClick, handleAssistChange } from "./sheets/assist.js";
 import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integrations.js";
@@ -137,6 +138,7 @@ document.addEventListener("click", async e => {
   if (await handleKnowledgeClick(act, el)) return;
   if (await handleGoalsClick(act, el, rerender)) return;
   if (await handleReportsClick(act, el, rerender)) return;
+  if (await handleIcClick(act, el)) return;
   if (await handlePartnerClick(act, el, rerender)) return;
   if (await handleFinClick(act, el, rerender)) return;
   if (await handleAssistClick(act, el)) return;
@@ -189,6 +191,7 @@ document.addEventListener("change", async e => {
   if (handleNotesChange(e, rerender)) return;
   if (handleGoalsChange(e, rerender)) return;
   if (handleReportsChange(e, rerender)) return;
+  if (handleIcChange(e)) return;
   if (await handlePartnerChange(e, rerender)) return;
   if (await handleFinChange(e, rerender)) return;
   if (handleAssistChange(e)) return;
@@ -224,6 +227,7 @@ document.addEventListener("submit", async e => {
   if (await handleKnowledgeSubmit(form)) return;
   if (await handleGoalsSubmit(form, rerender)) return;
   if (await handleReportsSubmit(form, rerender)) return;
+  if (await handleIcSubmit(form)) return;
   if (await handlePartnerSubmit(form)) return;
   if (await handleFinSubmit(form, rerender, e.submitter)) return;
 });
