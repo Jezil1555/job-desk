@@ -39,7 +39,7 @@ def fin_fixture():
              "next_journal_no": 1, "next_invoice_no": 1, "next_bill_no": 1, "created_at": iso(now)}]
     return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
-            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": []}
+            "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -116,14 +116,16 @@ def handle(route):
     def reply(body, status=200): route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
     def err(msg): reply({"code": "P0001", "message": msg, "details": None, "hint": None}, 400)
     if path.startswith("/auth/v1/"): return reply({"id": ME, "email": "jezz@example.com"})
-    if path.startswith("/storage/v1/object/sign/documents/"):
-        key = unquote(path.split("/storage/v1/object/sign/documents/")[1])
+    m_sign = re.match(r"^/storage/v1/object/sign/(documents|finance)/(.+)$", path)
+    if m_sign:
+        key = unquote(m_sign.group(2))
         if key not in STORAGE: return reply({"statusCode": "404", "error": "not_found", "message": "Object not found"}, 400)
-        return reply({"signedURL": f"/object/sign/documents/{key}?token=test"})
-    if path.startswith("/storage/v1/object/documents/") and req.method == "POST":
-        key = unquote(path.split("/storage/v1/object/documents/")[1]); STORAGE[key] = len(req.post_data_buffer or b"")
-        return reply({"Key": "documents/" + key, "Id": str(uuid.uuid4())})
-    if path == "/storage/v1/object/documents" and req.method == "DELETE":
+        return reply({"signedURL": f"/object/sign/{m_sign.group(1)}/{key}?token=test"})
+    m_up = re.match(r"^/storage/v1/object/(documents|finance)/(.+)$", path)
+    if m_up and req.method == "POST":
+        key = unquote(m_up.group(2)); STORAGE[key] = len(req.post_data_buffer or b"")
+        return reply({"Key": m_up.group(1) + "/" + key, "Id": str(uuid.uuid4())})
+    if path in ("/storage/v1/object/documents", "/storage/v1/object/finance") and req.method == "DELETE":
         for k in json.loads(req.post_data or "{}").get("prefixes", []): STORAGE.pop(k, None)
         return reply([])
     if path.startswith("/functions/v1/assistant"):
@@ -242,7 +244,65 @@ def sys_journal(eid, date, memo, source, source_id, lines):
         DB["fin_lines"].append({"id": str(uuid.uuid4()), "journal_id": jid, "entity_id": eid, "account_id": l["account_id"], "party_id": l.get("party_id"), "description": l.get("description"),
                                 "debit": l.get("debit", 0), "credit": l.get("credit", 0), "statement_line_id": None, "sort": i})
     return jid
+def p_balance(link_id):
+    k = next(x for x in DB["fin_partner_links"] if x["id"] == link_id)
+    js = {j["id"] for j in DB["fin_journals"] if j["status"] == "posted"}
+    return round(sum(float(l["credit"]) - float(l["debit"]) for l in DB["fin_lines"] if l["journal_id"] in js and l["account_id"] == k["partner_account_id"] and l["party_id"] == k["partner_party_id"]), 2)
+def partner_rpc(fn, b):
+    if fn == "fin_partner_link_create":
+        eid = b["p_entity"]; acc = next((a for a in DB["fin_accounts"] if a["entity_id"] == eid and a["type"] == "liability" and a["subtype"] == "partner"), None)
+        if not acc: raise FinError("missing_account: add a partner account first")
+        party = {"id": str(uuid.uuid4()), "entity_id": eid, "name": b["p_partner_name"], "kind": "partner", "archived": False, "created_at": iso(now)}; DB["fin_parties"].append(party)
+        k = {"id": str(uuid.uuid4()), "entity_id": eid, "partner_party_id": party["id"], "partner_account_id": acc["id"], "partner_user_id": ME, "mirror_entity_id": b.get("p_mirror_entity"),
+             "mirror_party_id": None, "mirror_receivable_account_id": None, "mirror_default_account_id": None, "terms_days": None, "next_no": 1, "created_at": iso(now)}
+        if k["mirror_entity_id"]:
+            me = k["mirror_entity_id"]; ename = next(e["name"] for e in DB["fin_entities"] if e["id"] == eid)
+            mp = {"id": str(uuid.uuid4()), "entity_id": me, "name": ename, "kind": "other", "archived": False, "created_at": iso(now)}; DB["fin_parties"].append(mp)
+            k.update(mirror_party_id=mp["id"], mirror_receivable_account_id=sys_acc(me, "ar"), mirror_default_account_id=sys_acc(me, "opening"))
+        DB.setdefault("fin_partner_links", []).append(k); return k["id"]
+    if fn == "fin_partner_record":
+        p = b["p"]; k = next(x for x in DB["fin_partner_links"] if x["id"] == p["link_id"]); a = next(x for x in DB["fin_accounts"] if x["id"] == p["account_id"])
+        t = p["txn_type"]; d = "decrease" if t == "reimbursement" else (p.get("direction") or "") if t == "adjustment" else "increase"; amt = float(p["amount"])
+        if d == "increase" and a["subtype"] in ("cash", "bank", "card"): raise FinError("mixed_funds: money the partner paid personally can't be booked against the business's bank or cash")
+        if t == "reimbursement" and a["subtype"] not in ("cash", "bank"): raise FinError("bad_account: a reimbursement is paid from the business's bank or cash account")
+        if d == "decrease" and amt > p_balance(k["id"]): raise FinError(f"exceeds_outstanding: {amt} is more than the {p_balance(k['id'])} currently owed to the partner")
+        no = "PR-" + str(k["next_no"]).zfill(4); k["next_no"] += 1; tid = str(uuid.uuid4()); desc = no + " · " + p["description"]
+        pl = {"account_id": k["partner_account_id"], "party_id": k["partner_party_id"], "description": desc}
+        lines = [{"account_id": a["id"], "description": desc, "debit": amt}, {**pl, "credit": amt}] if d == "increase" else [{**pl, "debit": amt}, {"account_id": a["id"], "description": desc, "credit": amt}]
+        jid = sys_journal(k["entity_id"], p["txn_date"], no + " " + p["description"], "partner", tid, lines); mj = None
+        if k["mirror_entity_id"]:
+            macc = p.get("mirror_account_id") or k["mirror_default_account_id"]; rl = {"account_id": k["mirror_receivable_account_id"], "party_id": k["mirror_party_id"], "description": desc}
+            ml = [{**rl, "debit": amt}, {"account_id": macc, "description": desc, "credit": amt}] if d == "increase" else [{"account_id": macc, "description": desc, "debit": amt}, {**rl, "credit": amt}]
+            mj = sys_journal(k["mirror_entity_id"], p["txn_date"], no + " " + p["description"], "partner", tid, ml)
+        DB.setdefault("fin_partner_txns", []).append({"id": tid, "link_id": k["id"], "entity_id": k["entity_id"], "txn_no": no, "txn_type": t, "direction": d, "txn_date": p["txn_date"],
+            "date_precision": p.get("date_precision") or "day", "payment_date": p.get("payment_date"), "description": p["description"], "beneficiary": p.get("beneficiary"), "reference": p.get("reference"),
+            "invoice_amount": p.get("invoice_amount"), "amount": amt, "currency": "QAR", "paid_from": p.get("paid_from") or ("business_bank" if t == "reimbursement" else "not_recorded"), "account_id": a["id"],
+            "job_ref": p.get("job_ref"), "recon_status": "unverified", "flags": p.get("flags") or [], "legacy_ref": None, "notes": p.get("notes"), "import_key": None, "journal_id": jid, "mirror_journal_id": mj,
+            "mirror_account_id": p.get("mirror_account_id"), "status": "posted", "reversal_journal_id": None, "mirror_reversal_journal_id": None, "reversal_reason": None, "last_change_reason": None,
+            "settles_txn_id": None, "created_by": ME, "created_at": iso(now), "updated_by": None, "updated_at": None})
+        return tid
+    if fn == "fin_partner_update":
+        if not (b.get("p_reason") or "").strip(): raise FinError("reason_required: say why you are changing this record")
+        t = next(x for x in DB["fin_partner_txns"] if x["id"] == b["p_txn"]); patch = b["p_patch"]
+        for key in patch:
+            if key in ("amount", "txn_date", "account_id"): raise FinError(f"locked_field: {key} can't be edited")
+        changes = {k2: [t.get(k2), v] for k2, v in patch.items()}; changes["last_change_reason"] = [t.get("last_change_reason"), b["p_reason"]]
+        t.update(patch); t["last_change_reason"] = b["p_reason"]
+        DB["fin_audit"].append({"id": str(uuid.uuid4()), "entity_id": t["entity_id"], "record_type": "fin_partner_txns", "record_id": t["id"], "actor_id": ME, "action": "update", "changes": changes, "created_at": iso(dt.datetime.now(dt.timezone.utc))})
+        return None
+    if fn == "fin_partner_reverse":
+        t = next(x for x in DB["fin_partner_txns"] if x["id"] == b["p_txn"])
+        if not (b.get("p_reason") or "").strip(): raise FinError("reason_required")
+        def rev(jid):
+            j = next(x for x in DB["fin_journals"] if x["id"] == jid); ls = [l for l in DB["fin_lines"] if l["journal_id"] == jid]
+            nid = sys_journal(j["entity_id"], j["entry_date"], "Reversal of #" + str(j["number"]), "reversal", j["id"], [{"account_id": l["account_id"], "party_id": l["party_id"], "debit": l["credit"], "credit": l["debit"]} for l in ls])
+            j["reversed_by"] = nid; next(x for x in DB["fin_journals"] if x["id"] == nid)["reversal_of"] = j["id"]; return nid
+        t["reversal_journal_id"] = rev(t["journal_id"]); t["mirror_reversal_journal_id"] = rev(t["mirror_journal_id"]) if t["mirror_journal_id"] else None
+        t["status"] = "reversed"; t["reversal_reason"] = b["p_reason"]; return None
+    if fn == "fin_partner_sync_mirror": return 0
+    raise FinError("not implemented in test fake: " + fn)
 def fin_rpc(fn, b):
+    if fn.startswith("fin_partner_"): return partner_rpc(fn, b)
     if fn == "fin_post_journal":
         j = next(x for x in DB["fin_journals"] if x["id"] == b["p_journal"]); ls = [l for l in DB["fin_lines"] if l["journal_id"] == j["id"]]
         dr = round(sum(float(l["debit"]) for l in ls), 2); cr = round(sum(float(l["credit"]) for l in ls), 2)
@@ -634,6 +694,93 @@ with sync_playwright() as pw:
     check("hidden section no longer shown", "Recent activity" not in page.inner_text("#view"))
     ctx.close()
 
+
+    # ---------- Partner accounts (fixture books only) ----------
+    ctx, page = new_page(b, 1366, 900)
+    FE3 = "fe000000-0000-4000-8000-000000000003"
+    acc = lambda eid, c, n, t, st: {"id": f"{eid[:8]}-acc-{c}", "entity_id": eid, "code": c, "name": n, "type": t, "subtype": st, "system_key": None, "is_active": True, "description": None}
+    DB["fin_accounts"] += [acc(FE1, "1200", "Inventory", "asset", "inventory"), acc(FE1, "2300", "Partner current accounts", "liability", "partner"), acc(FE1, "6100", "Salaries & wages", "expense", "other")]
+    DB["fin_entities"].append({**DB["fin_entities"][0], "id": FE3, "name": "Personal & Family", "kind": "personal", "workspace_id": None, "next_journal_no": 1})
+    DB["fin_members"].append({"entity_id": FE3, "user_id": ME, "role": "owner"}); DB["fin_accounts"] += seed_accounts(FE3)
+    a = lambda c, e=FE1: f"{e[:8]}-acc-{c}"
+    page.goto(BASE + f"/#/finance/{FE1}/partners"); page.reload(); page.wait_for_selector('[data-act="pt-setup"]')
+    check("partner accounts tab offers set-up when none exists", page.locator(".getting-started").count() == 1)
+    page.click('[data-act="pt-setup"]'); page.wait_for_selector("#ptSetup"); page.fill("#ps-name", "Jezz"); page.select_option("#ps-mirror", FE3); page.click("#psSave")
+    page.wait_for_selector('[data-act="pt-new"]')
+    lk = DB["fin_partner_links"][0] if DB["fin_partner_links"] else {}
+    check("partner link uses the existing partner current account and mirrors to personal", lk.get("partner_account_id") == a("2300") and lk.get("mirror_receivable_account_id") == a("1100", FE3))
+    def record(type_, date, desc, amt, acc_, month=False, ben="", ref="", settles=None, expect_ok=True):
+        page.click('[data-act="pt-new"]'); page.wait_for_selector("#ptRecord")
+        if type_ != "expense_funding": page.select_option("#pr-type", type_); page.wait_for_timeout(150)
+        page.fill("#pr-date", date); page.fill("#pr-desc", desc); page.fill("#pr-amt", str(amt)); page.select_option("#pr-acc", acc_)
+        if month: page.check("#pr-month")
+        if ben: page.fill("#pr-ben", ben)
+        if ref: page.fill("#pr-ref", ref)
+        if settles: page.select_option("#pr-settles", settles)
+        page.click("#prSave"); page.wait_for_timeout(600)
+        if expect_ok: page.keyboard.press("Escape"); page.wait_for_timeout(150)
+    page.click('[data-act="pt-new"]'); page.wait_for_selector("#ptRecord")
+    opts = page.eval_on_selector_all("#pr-acc option", "os => os.map(o => o.value)")
+    check("funding can't be posted to the business bank or cash (not offered)", a("1010") not in opts and a("1000") not in opts and a("4000") not in opts and a("2300") not in opts, str(opts))
+    page.keyboard.press("Escape")
+    record("expense_funding", "2026-09-15", "AND Stitching – Ceproteca", 1436, a("6900"), month=True, ben="Ceproteca")
+    t1 = DB["fin_partner_txns"][0] if DB["fin_partner_txns"] else {}
+    check("month-only date stored as month end, flagged, payment date blank", t1.get("txn_date") == "2026-09-30" and t1.get("date_precision") == "month" and t1.get("payment_date") is None and "month_only_date" in t1.get("flags", []), str(t1))
+    check("transaction posted in both books", t1.get("journal_id") and t1.get("mirror_journal_id") and t1.get("txn_no") == "PR-0001")
+    record("salary_funding", "2026-10-25", "September salary funding", 8500, a("6100"))
+    record("reimbursement", "2026-10-29", "Reimbursement from Dlusso", 20000, a("1010"), expect_ok=False)
+    check("reimbursement above what is owed is refused", "more than" in page.inner_text("#toast") and len(DB["fin_partner_txns"]) == 2, page.inner_text("#toast"))
+    page.keyboard.press("Escape"); page.wait_for_timeout(150)
+    sal = next(t for t in DB["fin_partner_txns"] if t["amount"] == 8500)
+    record("reimbursement", "2026-10-29", "Reimbursement from Dlusso", 8000, a("1010"), settles=sal["id"])
+    re_ = next((t for t in DB["fin_partner_txns"] if t["txn_type"] == "reimbursement"), {})
+    check("reimbursement debits the partner account and credits the business bank, linked to the salary line",
+          re_.get("settles_txn_id") == sal["id"] and any(l["journal_id"] == re_.get("journal_id") and l["account_id"] == a("1010") and float(l["credit"]) == 8000 for l in DB["fin_lines"]))
+    page.goto(BASE + f"/#/finance/{FE1}/partners/dashboard"); page.wait_for_selector(".tiles")
+    tiles = page.inner_text(".tiles")
+    check("dashboard: outstanding 1,936.00 and both books agree", "1,936.00" in tiles and "Both books agree" in page.inner_text("#view"), tiles[:200])
+    check("dashboard: no overdue invented without terms", "no repayment terms set" in tiles.lower())
+    shot(page, "20-partner-dashboard", True)
+    page.goto(BASE + f"/#/finance/{FE1}/partners/ledger"); page.wait_for_selector(".ptn-ledger")
+    lt = page.inner_text(".ptn-ledger")
+    check("ledger shows Document Pending and month-only dates honestly", "Document Pending" in lt and "exact date unavailable" in lt)
+    shot(page, "21-partner-ledger", True)
+    page.click(f'tr[data-id="{t1["id"]}"]'); page.wait_for_selector("#pt-docs")
+    page.set_input_files('input[data-act="pt-attach"]', files=[{"name": "Ceproteca invoice.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4 test"}]); page.wait_for_timeout(700)
+    dd = DB["fin_partner_docs"][0] if DB["fin_partner_docs"] else {}
+    check("document stored privately under the business's folder and linked to its transaction", dd.get("txn_id") == t1["id"] and dd.get("storage_path", "").startswith(FE1 + "/partner/") and dd.get("storage_path") in STORAGE, str(dd))
+    page.click(f'[data-act="pt-edit"][data-id="{t1["id"]}"]'); page.wait_for_selector("#ptEdit"); page.fill("#pe-ref", "AND-2209"); page.click("#peSave"); page.wait_for_timeout(300)
+    check("edit without a reason is refused", "reason" in page.inner_text("#toast").lower() and t1.get("reference") is None)
+    page.fill("#pe-reason", "Invoice number found on supplier copy"); page.click("#peSave"); page.wait_for_timeout(600)
+    au = [x for x in DB["fin_audit"] if x.get("record_id") == t1["id"]]
+    check("edit saved with previous value, new value and reason", t1.get("reference") == "AND-2209" and au and au[-1]["changes"]["reference"] == [None, "AND-2209"] and au[-1]["changes"]["last_change_reason"][1] == "Invoice number found on supplier copy")
+    page.click(f'[data-act="pt-reverse"][data-id="{t1["id"]}"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]')
+    check("reversal requires a reason", page.is_visible("#dlgErr"))
+    page.fill("#dlgIn", "Duplicate of a bill already posted"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(700)
+    check("reversal keeps the original and reverses both books", t1.get("status") == "reversed" and t1.get("reversal_journal_id") and t1.get("mirror_reversal_journal_id") and any(j["id"] == t1["journal_id"] for j in DB["fin_journals"]))
+    page.keyboard.press("Escape")
+    page.goto(BASE + f"/#/finance/{FE1}/partners/reconciliation"); page.wait_for_selector(".rtable")
+    rt = page.inner_text("#view").lower()
+    check("reconciliation: the three balances agree at 500 and exceptions are listed", rt.count("agrees") >= 3 and "500.00" in rt and "payment evidence missing" in rt and "differs" not in rt, rt.replace("\n", " ")[:400])
+    shot(page, "22-partner-reconciliation", True)
+    page.goto(BASE + f"/#/finance/{FE1}/partners/statement"); page.wait_for_selector(".report")
+    page.fill('input[data-act="pt-month"]', "2026-10"); page.dispatch_event('input[data-act="pt-month"]', "change"); page.wait_for_timeout(300)
+    st = page.inner_text(".report")
+    check("October statement: opening 0.00, funded 8,500, reimbursed 8,000, closing 500", "8,500.00" in st and "8,000.00" in st and "500.00" in st, st[:400])
+    with page.expect_download() as dl: page.click('[data-act="pt-xlsx"][data-r="statement"]')
+    path_ = os.path.join(SHOTS or "/tmp", "partner-statement.xlsx"); dl.value.save_as(path_)
+    try:
+        import openpyxl; wb = openpyxl.load_workbook(path_); ws = wb.worksheets[0]; vals = [r for r in ws.iter_rows(values_only=True)]
+        check("statement downloads as a real Excel file with the closing balance", dl.value.suggested_filename.endswith(".xlsx") and vals[-1][7] == 500, str(vals[-1]))
+    except Exception as ex_: check("statement downloads as a real Excel file with the closing balance", False, str(ex_))
+    with page.expect_download() as dl2: page.click('[data-act="pt-xlsx"][data-r="all"]')
+    try:
+        p2 = os.path.join(SHOTS or "/tmp", "partner-reports.xlsx"); dl2.value.save_as(p2); wb2 = openpyxl.load_workbook(p2)
+        check("all five reports export to one workbook", len(wb2.sheetnames) >= 6 and any("ageing" in n.lower() for n in wb2.sheetnames), str(wb2.sheetnames))
+    except Exception as ex_: check("all five reports export to one workbook", False, str(ex_))
+    shot(page, "23-partner-statement", True)
+    ctx.close()
+
     # ---------- phone, light + dark ----------
     for scheme in ["light", "dark"]:
         ctx, page = new_page(b, 390, 844, scheme)
@@ -650,7 +797,7 @@ with sync_playwright() as pw:
             shot(page, "08-tasks-phone", True)
             page.click('.trow[data-id="t-wait"]'); page.wait_for_selector("#tf-title"); shot(page, "09-task-phone")
             page.keyboard.press("Escape")
-            for route_ in ["goals/habits", "reports/weekly", "notes/decisions", "reports/projects", f"finance/{FE1}/overview", f"finance/{FE1}/reports", f"finance/{FE1}/invoices"]:
+            for route_ in ["goals/habits", "reports/weekly", "notes/decisions", "reports/projects", f"finance/{FE1}/overview", f"finance/{FE1}/reports", f"finance/{FE1}/invoices", f"finance/{FE1}/partners/dashboard", f"finance/{FE1}/partners/ledger"]:
                 page.goto(BASE + "/#/" + route_); page.wait_for_selector(".viewtabs")
                 check(f"phone: no horizontal scroll on {route_}", not page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"))
             shot(page, "13-projects-report-phone", True)

@@ -678,3 +678,14 @@ input.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tside.num, .trow .tside b.num { white-space: nowrap; }
 .briefing { margin: 6px 0 0; color: var(--ink-2); max-width: 70ch; line-height: 1.5; } .cap-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: -4px; } .chip.on { background: var(--accent-soft); color: var(--accent); }
 .copyrow { display: flex; gap: 8px; margin: 8px 0; } .copyrow .input { flex: 1; font-family: var(--mono); font-size: .8rem; } code { font-family: var(--mono); font-size: .88em; background: var(--sunken); padding: 1px 5px; border-radius: 4px; }
+
+/* partner accounts */
+.ptn-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 10px 0 6px; }
+.ptn-head h2 { margin: 0; font-size: 1.1rem; } .ptn-head .input { width: auto; }
+.viewtabs.sm { margin: 4px 0 12px; } .viewtabs.sm a { font-size: .85rem; }
+.chip.warn { background: var(--warn-soft); color: var(--warn); font-size: .72rem; }
+.ptn-ledger td { vertical-align: top; } .ptn-ledger .chip.warn { margin-top: 3px; display: inline-block; }
+.trow.ex-high { border-left: 3px solid var(--bad); } .trow.ex-medium { border-left: 3px solid var(--warn); } .trow.ex-info { border-left: 3px solid var(--info); }
+.trow .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+ul.plain.small li { font-size: .85rem; margin: 4px 0; }
+.ptn-ledger { font-size: .88rem; } .ptn-ledger th, .ptn-ledger td { padding-left: 8px; padding-right: 8px; } .ptn-ledger .pill { white-space: nowrap; }

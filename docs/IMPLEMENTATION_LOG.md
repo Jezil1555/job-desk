@@ -92,3 +92,10 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 ### Needs from the owner
 - AI: add `ANTHROPIC_API_KEY` under Supabase → Edge Functions → Secrets, then turn it on in Settings. Until then AI buttons stay hidden and everything else works.
 - Not verified: a live AI call (no key yet) and a calendar app subscribing to a real link (the sandbox can't reach Supabase; the iCal output is unit-tested).
+
+## Phase 5 — Partner accounts (Dlusso ↔ Jezz receivables), 30 Oct 2026
+- Migrations `20261030160000_partner_accounts.sql`, `20261030170000_partner_settles.sql`: `fin_partner_links`, `fin_partner_txns`, `fin_partner_docs`; RPCs `fin_partner_link_create`, `fin_partner_record`, `fin_partner_update` (descriptive fields only, reason required), `fin_partner_reverse` (both books), `fin_partner_sync_mirror`, balance functions. Journal source `partner`, reversible only through the module.
+- Posting: funding Dr expense/inventory/liability, Cr 2300 Partner current accounts (party = partner); reimbursement Dr 2300, Cr business bank/cash. Mirror in personal books: Dr 1100 Money owed to me (party = business), Cr chosen personal account (default 3900 Opening balances). Funding can never hit the business bank/cash/card or income/equity; reimbursements can't exceed the balance.
+- Tests: `supabase/tests/phase5_partner_tests.sql` 61/61 locally, 59/59 on production (rolled back, before the settles test was added); unit 71/71; e2e 139/139.
+- Import (production, as Jezz): 16 lines PR-0001…PR-0016. Lines 1–9 = historical QAR 7,066 (`legacy_7066`). September lines dated 30 Sep 2026, `month_only_date`, payment date blank. Best-guess accounts flagged (PR-0001, 0010, 0012, 0013). PR-0016 settles PR-0015. New account 6410 Vehicle expenses. Verified: Dlusso 2300/Jezz = 9,623.50 Cr; Personal 1100/Dlusso = 9,623.50 Dr; both trial balances balance.
+- COA mapping used: 1200 Partner receivable → Dlusso 2300 (liability) + Personal 1100 (asset); 1300 Fabric → 1200 Inventory; 5100 COGS → 5000; 6100 Staff → 6100; 6200 Freight → 6400; 6300 Vehicle → 6410 (new); 6400 General → 6900; 6500 Bank charges → 6500.

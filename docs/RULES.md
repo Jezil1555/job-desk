@@ -112,3 +112,9 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 - Off by default; each person turns it on in Settings. Requires the `ANTHROPIC_API_KEY` secret on the Supabase project (optional `AI_MODEL`, default `claude-sonnet-5-5`; `AI_DAILY_LIMIT`, default 60 requests per 24 hours).
 - Only the text needed for the button pressed is sent (meeting notes, a follow-up's facts, the week's numbers and task titles, or bank line descriptions/amounts with account names). Job Desk stores only a usage row (action, token counts), never the content.
 - Results are suggestions: action items go into the review list, drafts into the editor, summaries into the notes box, account suggestions onto buttons. The assistant has no database access; it cannot create tasks, change dates, post entries, mark payments or send messages, and its output is validated (e.g. suggested accounts must be from your own list).
+
+## Partner accounts
+- Money a partner pays personally posts against the partner current account, never the business's bank or cash, never income.
+- Reimbursements debit the partner account and credit business bank/cash — never revenue or a second expense — and can't exceed what is owed.
+- Posted partner transactions are never deleted or edited in amount, date or account; they are reversed (both books) with a reason. Other edits need a reason and are audited (old → new, who, when).
+- Missing documents show "Document Pending"; no links are invented. Month-only dates are labelled "exact date unavailable". Nothing is "overdue" unless repayment terms are set.

@@ -14,6 +14,7 @@ import { renderReports, handleReportsClick, handleReportsChange, handleReportsSu
 import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
 import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
 import { loadFin, fin } from "./finapi.js";
+import { handlePartnerClick, handlePartnerChange, handlePartnerInput, handlePartnerSubmit } from "./sheets/partnerforms.js";
 import { openDraft, handleAssistClick, handleAssistChange } from "./sheets/assist.js";
 import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integrations.js";
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
@@ -40,7 +41,7 @@ function parseRoute() {
   const [path, query] = raw.split("?");
   const seg = path.split("/").filter(Boolean);
   const params = new URLSearchParams(query || "");
-  const r = { name: seg[0] || "home", a: seg[1], b: seg[2], params };
+  const r = { name: seg[0] || "home", a: seg[1], b: seg[2], c: seg[3], params };
   return r;
 }
 const navKey = r => ({ home: "home", tasks: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", calendar: "calendar", followups: "calendar", finance: "finance", goals: "goals", notes: "notes", reports: "reports", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
@@ -74,7 +75,7 @@ function render() {
       case "notes": renderNotes(view, r.a || "notes"); break;
       case "goals": renderGoals(view, r.a || "habits"); break;
       case "reports": renderReports(view, r.a || "daily"); break;
-      case "finance": r.a ? renderFinance(view, r.a, r.b || "overview") : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
+      case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
       default: renderHome(view); title = "Command Centre";
     }
   } catch (e) {
@@ -136,6 +137,7 @@ document.addEventListener("click", async e => {
   if (await handleKnowledgeClick(act, el)) return;
   if (await handleGoalsClick(act, el, rerender)) return;
   if (await handleReportsClick(act, el, rerender)) return;
+  if (await handlePartnerClick(act, el, rerender)) return;
   if (await handleFinClick(act, el, rerender)) return;
   if (await handleAssistClick(act, el)) return;
   if (await handleIntegrationsClick(act, el)) return;
@@ -186,6 +188,7 @@ document.addEventListener("change", async e => {
   if (handleNotesChange(e, rerender)) return;
   if (handleGoalsChange(e, rerender)) return;
   if (handleReportsChange(e, rerender)) return;
+  if (await handlePartnerChange(e, rerender)) return;
   if (await handleFinChange(e, rerender)) return;
   if (handleAssistChange(e)) return;
   if (await handleIntegrationsChange(e)) return;
@@ -203,6 +206,7 @@ document.addEventListener("input", e => {
   if (handleCaptureInput(e)) return;
   if (handleKnowledgeInput(e)) return;
   if (handleNotesInput(e, keepFocus)) return;
+  if (handlePartnerInput(e, keepFocus)) return;
   if (handleFinInput(e, keepFocus)) return;
   if (e.target.id === "global-q") { state.ui.globalQ = e.target.value; searchDebounced(e.target.value); }
   if (e.target.id === "tl-search") { state.ui.search = e.target.value; listDebounced(); }
@@ -219,6 +223,7 @@ document.addEventListener("submit", async e => {
   if (await handleKnowledgeSubmit(form)) return;
   if (await handleGoalsSubmit(form, rerender)) return;
   if (await handleReportsSubmit(form, rerender)) return;
+  if (await handlePartnerSubmit(form)) return;
   if (await handleFinSubmit(form, rerender, e.submitter)) return;
 });
 $("sheetWrap").addEventListener("click", e => { if (e.target.id === "sheetBackdrop") { closeSheet(); if (!sheetOpen()) clearTaskSheet(); } });

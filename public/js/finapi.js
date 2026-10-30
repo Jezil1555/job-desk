@@ -8,6 +8,7 @@ export const fin = {
   loaded: false, loading: null, error: null,
   entities: [], members: [], accounts: [], parties: [], journals: [], lines: [], invoices: [], invLines: [], totals: new Map(),
   payments: [], allocations: [], items: [], moves: [], statement: [], budgets: [], files: [], audit: [],
+  plinks: [], ptxns: [], pdocs: [], // partner accounts
   posted: [] // posted lines with entry_date, recomputed after each load
 };
 const PAGE = 1000;
@@ -24,7 +25,7 @@ export function loadFin(force = false) {
   if (fin.loading && !force) return fin.loading;
   fin.loading = (async () => {
     try {
-      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files] = await Promise.all([
+      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs] = await Promise.all([
         all(() => sb.from("fin_entities").select("*").order("created_at")),
         all(() => sb.from("fin_members").select("entity_id, user_id, role")),
         all(() => sb.from("fin_accounts").select("*").order("code")),
@@ -40,9 +41,12 @@ export function loadFin(force = false) {
         all(() => sb.from("fin_stock_moves").select("*").order("move_date")),
         all(() => sb.from("fin_statement_lines").select("*").order("line_date", { ascending: false })),
         all(() => sb.from("fin_budgets").select("*").order("month")),
-        all(() => sb.from("fin_files").select("*").order("created_at", { ascending: false }))
+        all(() => sb.from("fin_files").select("*").order("created_at", { ascending: false })),
+        all(() => sb.from("fin_partner_links").select("*").order("created_at")),
+        all(() => sb.from("fin_partner_txns").select("*").order("txn_no")),
+        all(() => sb.from("fin_partner_docs").select("*").order("created_at"))
       ]);
-      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files,
+      Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs,
         totals: new Map(totals.map(t => [t.invoice_id, t])), loaded: true, error: null });
       fin.posted = postedLines(lines, journals);
     } catch (e) { fin.error = e; console.error(e); }
@@ -146,4 +150,52 @@ export async function deleteFinFile(f) {
   const r = await run(sb.from("fin_files").delete().eq("id", f.id)); if (r.error) return r;
   await sb.storage.from("finance").remove([f.storage_path]);
   fin.files = fin.files.filter(x => x.id !== f.id); return r;
+}
+
+/* ---------- partner accounts ---------- */
+export const partnerLinksOf = eid => fin.plinks.filter(k => k.entity_id === eid);
+export const partnerTxnsOf = linkId => fin.ptxns.filter(t => t.link_id === linkId);
+export const partnerDocsOf = linkId => { const ids = new Set(partnerTxnsOf(linkId).map(t => t.id)); return fin.pdocs.filter(d => ids.has(d.txn_id)); };
+export const ptxnById = id => fin.ptxns.find(t => t.id === id);
+/** Partner balance straight from each ledger (business: credit balance on the partner account for that party; personal: debit balance owed by the business). */
+export function partnerLedgerBalances(k) {
+  const sum = (acc, party, sign) => Math.round(fin.posted.filter(l => l.account_id === acc && l.party_id === party).reduce((s, l) => s + sign * (Number(l.credit) - Number(l.debit)), 0) * 100) / 100;
+  const biz = sum(k.partner_account_id, k.partner_party_id, 1);
+  const visibleMirror = k.mirror_entity_id && fin.entities.some(e => e.id === k.mirror_entity_id);
+  return { biz, mirror: visibleMirror ? sum(k.mirror_receivable_account_id, k.mirror_party_id, -1) : null, mirrorVisible: !!visibleMirror };
+}
+export const partnerLinkCreate = (eid, name, mirror) => rpc("fin_partner_link_create", { p_entity: eid, p_partner_name: name, p_mirror_entity: mirror || null });
+export const partnerRecord = p => rpc("fin_partner_record", { p });
+export const partnerUpdate = (id, patch, reason) => rpc("fin_partner_update", { p_txn: id, p_patch: patch, p_reason: reason });
+export const partnerReverse = (id, reason) => rpc("fin_partner_reverse", { p_txn: id, p_reason: reason });
+export const partnerSyncMirror = linkId => rpc("fin_partner_sync_mirror", { p_link: linkId });
+export const setPartnerTerms = (linkId, days) => run(sb.from("fin_partner_links").update({ terms_days: days }).eq("id", linkId));
+export const PARTNER_DOC_TYPES = ["application/pdf", "image/jpeg", "image/png", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "text/csv"];
+/** Upload a supporting document to private storage and link it to a partner transaction. */
+export async function uploadPartnerDoc(file, txn, kind, safeName) {
+  if (file.size > 25 * 1024 * 1024) return { error: "Files can be up to 25 MB." };
+  let type = file.type;
+  if (!type || !PARTNER_DOC_TYPES.includes(type)) { const ext = (file.name.split(".").pop() || "").toLowerCase();
+    type = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", xlsx: PARTNER_DOC_TYPES[3], xls: "application/vnd.ms-excel", csv: "text/csv" }[ext]; }
+  if (!type) return { error: "Attach a PDF, JPG, PNG or Excel file." };
+  const path = `${txn.entity_id}/partner/${crypto.randomUUID()}/${safeName(file.name)}`;
+  const up = await run(sb.storage.from("finance").upload(path, file, { contentType: type, upsert: false }));
+  if (up.error) return up;
+  const r = await run(sb.from("fin_partner_docs").insert({ txn_id: txn.id, entity_id: txn.entity_id, kind, title: file.name, storage_path: path, mime_type: type, size_bytes: file.size }).select().single());
+  if (r.error) { await sb.storage.from("finance").remove([path]); return r; }
+  fin.pdocs.push(r.data); return r;
+}
+export async function addPartnerDocLink(txn, kind, title, url) {
+  const r = await run(sb.from("fin_partner_docs").insert({ txn_id: txn.id, entity_id: txn.entity_id, kind, title, url }).select().single());
+  if (!r.error) fin.pdocs.push(r.data); return r;
+}
+export async function partnerDocUrl(d) {
+  if (d.url) return { data: d.url };
+  const r = await run(sb.storage.from("finance").createSignedUrl(d.storage_path, 600)); // private bucket, link expires in 10 minutes
+  return r.error ? r : { data: r.data.signedUrl };
+}
+export async function deletePartnerDoc(d) {
+  const r = await run(sb.from("fin_partner_docs").delete().eq("id", d.id)); if (r.error) return r;
+  if (d.storage_path) await sb.storage.from("finance").remove([d.storage_path]);
+  fin.pdocs = fin.pdocs.filter(x => x.id !== d.id); return r;
 }
