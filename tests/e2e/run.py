@@ -199,6 +199,36 @@ def handle(route):
             if body["p_decision"] == "approve": t.update(review_status="approved", reviewed_by=ME, status="completed", completed_at=iso(dt.datetime.now(dt.timezone.utc)), progress=100)
             else: t.update(review_status="changes_requested", review_note=body.get("p_note"), status="in_progress")
             return reply(None)
+        if fn == "save_project_as_template":
+            pj = next(x for x in DB["projects"] if x["id"] == body["p_project"]); anchor = dt.date.fromisoformat(pj["start_date"])
+            ms = sorted([m for m in DB["milestones"] if m["project_id"] == pj["id"]], key=lambda m: m["sort"])
+            idx = {m["id"]: i for i, m in enumerate(ms)}
+            tasks_ = [t for t in DB["tasks"] if t["project_id"] == pj["id"] and not t["deleted_at"] and t["status"] != "cancelled" and not t["parent_id"]]
+            bodyj = {"milestones": [{"title": m["title"], "offset_days": (dt.date.fromisoformat(m["planned_date"]) - anchor).days if m["planned_date"] else None, "weight": m["weight"], "is_critical": m["is_critical"]} for m in ms],
+                     "tasks": [{"title": t["title"], "priority": t["priority"], "milestone": idx.get(t["milestone_id"]), "criteria": [c["text"] for c in (t["completion_criteria"] or [])],
+                                "offset_days": (dt.date.fromisoformat(t["due_at"][:10]) - anchor).days if t["due_at"] else None} for t in tasks_],
+                     "fields": [{"key": d["key"], "label": d["label"], "type": d["type"], "options": d["options"], "required": d["required"]} for d in DB.get("field_defs", []) if d["project_id"] == pj["id"] and not d["archived"]]}
+            tid = str(uuid.uuid4()); DB.setdefault("project_templates", []).append({"id": tid, "workspace_id": pj["workspace_id"], "name": body["p_name"], "description": pj["description"], "body": bodyj,
+                "source_project_id": pj["id"], "archived": False, "created_by": ME, "created_at": iso(now), "updated_at": iso(now)})
+            return reply(tid)
+        if fn == "create_project_from_template":
+            tp = next(x for x in DB["project_templates"] if x["id"] == body["p_template"]); start = dt.date.fromisoformat(body["p_start"]); b_ = tp["body"]
+            offs = [x["offset_days"] for x in b_["milestones"] + b_["tasks"] if x.get("offset_days") is not None]
+            pid = str(uuid.uuid4())
+            DB["projects"].append({"id": pid, "workspace_id": tp["workspace_id"], "name": body["p_name"], "description": tp["description"], "owner_id": ME, "priority": "medium", "start_date": body["p_start"],
+                "target_date": body.get("p_target") or ((start + dt.timedelta(days=max(offs))).isoformat() if offs else None), "manual_status": None, "manual_status_reason": None, "budget": None, "budget_currency": None,
+                "next_action": None, "archived": False, "created_by": ME, "created_at": iso(now), "updated_at": iso(now)})
+            mids = []
+            for i, m in enumerate(b_["milestones"]):
+                mid = str(uuid.uuid4()); mids.append(mid)
+                DB["milestones"].append({"id": mid, "project_id": pid, "title": m["title"], "planned_date": (start + dt.timedelta(days=m["offset_days"])).isoformat() if m.get("offset_days") is not None else None,
+                    "actual_date": None, "weight": m.get("weight", 1), "is_critical": m.get("is_critical", False), "notes": None, "sort": i})
+            for i, t in enumerate(b_["tasks"]):
+                DB["tasks"].append({**fresh_db()["tasks"][0], "id": str(uuid.uuid4()), "workspace_id": tp["workspace_id"], "project_id": pid, "milestone_id": mids[t["milestone"]] if t.get("milestone") is not None else None,
+                    "title": t["title"], "priority": t.get("priority", "medium"), "status": "not_started", "completed_at": None, "progress": 0, "custom": {}, "next_action": None,
+                    "completion_criteria": [{"text": c, "done": False} for c in t.get("criteria", [])],
+                    "due_at": ((start + dt.timedelta(days=t["offset_days"])).isoformat() + "T20:59:00+00:00") if t.get("offset_days") is not None else None, "created_at": iso(now), "updated_at": iso(now)})
+            return reply(pid)
         if fn == "reopen_task":
             t = next(t for t in DB["tasks"] if t["id"] == body["p_task"]); t["status"] = body["p_status"]; t["completed_at"] = None
             DB["task_comments"].append({"id": str(uuid.uuid4()), "task_id": t["id"], "author_id": ME, "body": "Reopened: " + body["p_reason"], "kind": "status", "created_at": iso(dt.datetime.now(dt.timezone.utc))})
@@ -247,6 +277,9 @@ def handle(route):
                 j = next(x for x in DB["fin_journals"] if x["id"] == it["journal_id"])
                 if j["status"] == "posted": return err("posted_immutable: lines of a posted entry can't be changed")
                 it = {"debit": 0, "credit": 0, "party_id": None, "statement_line_id": None, "sort": 0, **it, "entity_id": j["entity_id"]}
+            if table == "field_defs":
+                it = {"archived": False, "sort": 0, "project_id": None, "options": [], "required": False, **it}
+                if any(d["workspace_id"] == it["workspace_id"] and d["key"] == it["key"] and not d["archived"] for d in rows): return err("duplicate key value violates unique constraint")
             if table == "fin_invoices":
                 it = {"status": "draft", "number": None, "journal_id": None, "task_id": None, "due_date": None, "currency": None, "fx_rate": None, **it}
                 if it["currency"] == next(e for e in DB["fin_entities"] if e["id"] == it["entity_id"])["base_currency"]: it["currency"] = None
@@ -267,6 +300,10 @@ def handle(route):
                 if table == "tasks":
                     e = rule_check(new, r)
                     if e: return err(e)
+                    if new["status"] == "completed" and r["status"] != "completed":
+                        miss = [d["label"] for d in DB.get("field_defs", []) if d["workspace_id"] == new["workspace_id"] and d["required"] and not d["archived"] and d["project_id"] in (None, new.get("project_id"))
+                                and ((new.get("custom") or {}).get(d["key"]) in (None, "") or (d["type"] == "checkbox" and (new.get("custom") or {}).get(d["key"]) is not True))]
+                        if miss: return err("field_required: fill in " + ", ".join(miss) + " before completing")
                     if new["status"] == "completed" and r["status"] != "completed": new["completed_at"] = iso(dt.datetime.now(dt.timezone.utc)); new["progress"] = 100
                     new["updated_at"] = iso(dt.datetime.now(dt.timezone.utc))
                 r.clear(); r.update(new); out.append(r)
@@ -1175,6 +1212,42 @@ with sync_playwright() as pw:
     page.goto(BASE + f"/#/finance/{FE1}/payments"); page.wait_for_selector(".rtable")
     check("payments list shows the QAR received and the USD amount", "3,660.00" in page.inner_text(".rtable") and "USD" in page.inner_text(".rtable"))
     shot(page, "30-fx-payments", True)
+    ctx.close()
+
+    # ---------- Increment 9: custom fields and templates ----------
+    ctx, page = new_page(b, 1366, 900)
+    page.goto(BASE + f"/#/w/{WS[1]}/setup"); page.wait_for_selector('[data-act="field-new"]')
+    page.click('[data-act="field-new"]'); page.wait_for_selector("#fieldForm")
+    page.fill("#fd-label", "AWB number"); page.check("#fd-required"); page.click("#fdSave"); page.wait_for_timeout(700)
+    page.click('[data-act="field-new"]'); page.wait_for_selector("#fieldForm")
+    page.fill("#fd-label", "Mode"); page.select_option("#fd-type", "select"); page.wait_for_selector("#fd-options")
+    page.click("#fdSave"); page.wait_for_timeout(200)
+    check("a choice field needs choices", "at least one choice" in page.inner_text("#toast").lower())
+    page.fill("#fd-options", "Air\nSea\nRoad"); page.click("#fdSave"); page.wait_for_timeout(700)
+    fd = {d["key"]: d for d in DB.get("field_defs", [])}
+    check("fields saved with safe keys, choices and the required flag", fd.get("awb_number", {}).get("required") is True and fd.get("mode", {}).get("options") == ["Air", "Sea", "Road"])
+    check("fields listed on the workspace set-up tab", "awb number" in page.inner_text("#fieldTable").lower() and "must be filled in" in page.inner_text("#fieldTable").lower())
+    tk = next(t for t in DB["tasks"] if t["workspace_id"] == WS[1] and t["status"] not in ("completed", "cancelled") and not t["parent_id"] and not t.get("reviewer_id") and not t["completion_criteria"])
+    tk["custom"] = {}
+    page.goto(BASE + f"/#/w/{WS[1]}/tasks"); page.wait_for_selector(f'.trow[data-id="{tk["id"]}"]'); page.click(f'.trow[data-id="{tk["id"]}"]'); page.wait_for_selector("#tfCustom")
+    check("task sheet shows the workspace's fields", "awb number" in page.inner_text("#tfCustom").lower() and page.locator("#tf-cf-mode option").count() == 4)
+    page.select_option("#tf-cf-mode", "Air"); page.wait_for_timeout(700)
+    check("choosing a value saves it on the task", tk.get("custom", {}).get("mode") == "Air")
+    page.select_option("#tf-status", "completed"); page.wait_for_timeout(500)
+    check("required field blocks completion", tk["status"] != "completed" and "awb number" in page.inner_text("#toast").lower())
+    page.fill("#tf-cf-awb_number", "157-22849310"); page.press("#tf-cf-awb_number", "Tab"); page.wait_for_timeout(700)
+    check("text value saved", tk.get("custom", {}).get("awb_number") == "157-22849310")
+    shot(page, "31-task-custom-fields", True)
+    page.goto(BASE + "/#/home"); page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector('[data-act="save-template"]')
+    page.click('[data-act="save-template"]'); page.wait_for_selector("#dlgIn"); page.fill("#dlgIn", "BOM delivery"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(800)
+    tp = (DB.get("project_templates") or [{}])[-1]
+    check("project saved as a template (structure only)", tp.get("name") == "BOM delivery" and len(tp["body"]["milestones"]) >= 1 and all("custom" not in t for t in tp["body"]["tasks"]))
+    page.goto(BASE + f"/#/w/{WS[1]}/setup"); page.wait_for_selector(f'[data-act="tpl-use"][data-id="{tp.get("id")}"]')
+    page.click(f'[data-act="tpl-use"][data-id="{tp.get("id")}"]'); page.wait_for_selector("#tplUseForm")
+    page.fill("#tu-name", "Kite BOM — phase 2"); page.fill("#tu-start", "2027-01-10"); page.click("#tuSave"); page.wait_for_timeout(1500)
+    np_ = next((x for x in DB["projects"] if x["name"] == "Kite BOM — phase 2"), {})
+    check("new project created from the template and opened", np_.get("start_date") == "2027-01-10" and f"/p/{np_.get('id')}" in page.url
+          and any(m["project_id"] == np_.get("id") for m in DB["milestones"]))
     ctx.close()
 
     # ---------- phone, light + dark ----------

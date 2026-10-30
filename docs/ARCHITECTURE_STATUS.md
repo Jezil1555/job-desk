@@ -76,7 +76,15 @@ Tests: 11 live DB checks (rolled back), rollback verified locally, 4 browser che
 
 ## 10. Technical governance — Partial
 - Met: one shared task engine; migrations in the repo with an implementation log; RLS and cross-entity isolation tested on live (rolled back).
-- Gap: **written rollback (down) scripts and a rollback test**; project templates and configurable fields.
+- Met (increment 9, 31 Oct): **configurable fields and project templates on the same engine.** Each workspace defines its own fields (text, number,
+  date, choice list, yes/no), for every task or one project; values live on the task (`tasks.custom`), are checked by the database, can be
+  required before completion, and every change is in the task's history. Fields are archived, never deleted (values kept); key and type are fixed.
+  Any project can be saved as a template (milestones, tasks, priorities, criteria, next actions and its own fields — no values, people or progress),
+  and a new project made from it with dates counted from a chosen start. Instantiation inserts ordinary rows as the person, so every task rule applies.
+  Tests: 30 checks locally and live (rolled back), rollback verified locally, 3 unit, 9 browser checks. The live run caught that the app role can't
+  write the activity log directly (the local stand-in allowed it); fixed with a checked helper (`20261031031000_template_log_fix`) and the
+  stand-in now matches production for that table.
+- Gap: written rollback (down) scripts for the migrations before increment 1.
 
 ## 11–12. Quality gates and discipline
 Each feature so far has a schema, backend, frontend, permission tests, validation tests and persistence checks before deploy. Increments continue one at a time.
@@ -96,10 +104,10 @@ Each feature so far has a schema, backend, frontend, permission tests, validatio
 6. ~~Inter-entity transactions~~ — done.
 7. ~~Dlusso production costing~~ — done.
 8. ~~Foreign currency~~ — done.
-9. **Templates and project-specific fields** on the shared task engine.
+9. ~~Templates and project-specific fields~~ — done.
 10. **Rollback scripts** for each migration with a tested rollback procedure.
 
 ## Deployment status
-- App: Render, auto-deploy from `main` (latest: foreign currency).
+- App: Render, auto-deploy from `main` (latest: templates and custom fields).
 - Database: all migrations in `supabase/migrations` applied to project `lvusersarnzzamdgvxgm`.
 - Edge functions: `send-push`, `calendar-feed`, `assistant`, `gcal-sync`.

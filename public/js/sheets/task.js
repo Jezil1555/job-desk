@@ -1,6 +1,6 @@
 // Task detail & editor. Autosaves each field after the server confirms; rules are enforced server-side too.
 import { esc, zonedDate, zonedTime, zonedToISO, fmtDateTime, ago } from "../util.js";
-import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements,
+import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements, fieldsFor,
          openPrerequisites, dependents, taskProgress, overduePrerequisites } from "../logic.js";
 import { state, wsById, projectById, membersOf, nameOf, shortName, subtasksOf, canWrite, contactById, activeWorkspaces } from "../store.js";
 import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor, requestReview, reviewTask } from "../api.js";
@@ -43,7 +43,7 @@ export async function setStatus(t, status) {
   }
   const fields = { status };
   if (status === "completed") {
-    const blockers = completionBlockers(t, subtasksOf(t.id), state.deps, state.taskById);
+    const blockers = completionBlockers(t, subtasksOf(t.id), state.deps, state.taskById, state.fieldDefs);
     if (blockers.length) { toastError("Can't complete yet: " + blockers.join(", ") + "."); return false; }
   }
   if (status === "waiting" && statusRequirements("waiting", t)) {
@@ -179,6 +179,7 @@ function detailsTab(t, w, prog, subs) {
     <label class="field"><span>Action to unblock</span><input class="input" id="tf-unblock_action" value="${esc(t.unblock_action || "")}" ${ro}></label></div></fieldset>` : ""}
   <datalist id="contactList">${contacts.map(c => `<option value="${esc(c.name)}">`).join("")}</datalist>
   <label class="field"><span>Next action</span><input class="input" id="tf-next_action" value="${esc(t.next_action || "")}" placeholder="The very next physical step" ${ro}></label>
+  ${customFields(t, ro)}
   <div class="field"><span>Completion criteria <small>(all must be ticked to complete)</small></span>${criteriaEditor(t, w)}</div>
   <div class="field"><span>Progress <small>${prog.basis === "subtasks" ? "· calculated from subtasks" : "· set manually"}</small></span>
     <div class="progrow"><input type="range" min="0" max="100" step="5" id="tf-progress" value="${prog.value}" ${w && prog.basis === "manual" && !isClosed(t) ? "" : "disabled"}><b class="num" id="progVal">${prog.value}%</b></div></div>
@@ -192,6 +193,19 @@ function detailsTab(t, w, prog, subs) {
   <p class="meta-foot">Created by ${esc(shortName(t.created_by))} · ${fmtDateTime(t.created_at, state.tz, true)} · updated ${ago(t.updated_at)}</p>`;
 }
 
+/** The workspace's (and project's) own fields — same task engine, configurable per workspace. */
+function customFields(t, ro) {
+  const defs = fieldsFor(t, state.fieldDefs), c = t.custom || {};
+  const extra = Object.keys(c).filter(k => !defs.some(d => d.key === k));
+  if (!defs.length && !extra.length) return "";
+  const lab = d => `${esc(d.label)}${d.required ? ` <small title="Needed before completing">· required</small>` : ""}${d.project_id ? ` <small>· this project</small>` : ""}`;
+  const input = d => { const v = c[d.key], id = `tf-cf-${d.key}`;
+    if (d.type === "checkbox") return `<label class="field chk"><input type="checkbox" id="${id}" ${v === true ? "checked" : ""} ${ro}> <span>${lab(d)}</span></label>`;
+    if (d.type === "select") return `<label class="field"><span>${lab(d)}</span><select class="input" id="${id}" ${ro}><option value="">—</option>${[...new Set([...(d.options || []), ...(v && !(d.options || []).includes(v) ? [v] : [])])].map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
+    return `<label class="field"><span>${lab(d)}</span><input class="input ${d.type === "number" ? "num" : ""}" id="${id}" type="${d.type === "number" ? "number" : d.type === "date" ? "date" : "text"}" ${d.type === "number" ? `step="any"` : `maxlength="500"`} value="${esc(v ?? "")}" ${ro}></label>`; };
+  return `<fieldset class="group" id="tfCustom"><legend>Details</legend><div class="grid2">${defs.map(input).join("")}</div>
+    ${extra.length ? `<p class="hint">Earlier values for fields no longer in use: ${extra.map(k => `${esc(k)}: ${esc(String(c[k]))}`).join(" · ")}</p>` : ""}</fieldset>`;
+}
 function criteriaEditor(t, w) {
   const list = Array.isArray(t.completion_criteria) ? t.completion_criteria : [];
   return `<ul class="crit">${list.map((c, i) => `<li><label><input type="checkbox" data-act="crit-toggle" data-i="${i}" ${c.done ? "checked" : ""} ${w ? "" : "disabled"}> <span class="${c.done ? "done" : ""}">${esc(c.text)}</span></label>${w ? `<button class="iconbtn sm" data-act="crit-remove" data-i="${i}" aria-label="Remove criterion">${ICON.close}</button>` : ""}</li>`).join("")}</ul>
@@ -261,9 +275,10 @@ function historyTab() {
   if (!list.length) return `<p class="hint">No history yet.</p>`;
   return `<ol class="timeline">${list.map(a => {
     const ch = Object.entries(a.changes || {}).filter(([k, v]) => Array.isArray(v) && FIELD_LABEL[k]);
-    const what = a.action === "created" ? "created the task" : a.action === "completed" ? "completed the task" : a.action === "reopened" ? "reopened the task" : a.action === "deleted" ? "moved it to the bin" : a.action === "restored" ? "restored it" : a.action === "dependency_added" ? "added a prerequisite" : a.action === "delegated" ? "changed who is responsible" : a.action === "review_requested" ? "asked for review" : a.action === "changes_requested" ? "asked for changes" : "updated";
+    if (a.action === "fields_changed") Object.entries((a.changes || {}).custom || {}).forEach(([k, v]) => { const d = (state.fieldDefs || []).find(x => x.key === k && x.workspace_id === a.workspace_id); ch.push([k, v, d ? d.label : k]); });
+    const what = a.action === "created" ? "created the task" : a.action === "completed" ? "completed the task" : a.action === "reopened" ? "reopened the task" : a.action === "deleted" ? "moved it to the bin" : a.action === "restored" ? "restored it" : a.action === "dependency_added" ? "added a prerequisite" : a.action === "delegated" ? "changed who is responsible" : a.action === "review_requested" ? "asked for review" : a.action === "changes_requested" ? "asked for changes" : a.action === "fields_changed" ? "updated details" : "updated";
     return `<li class="status"><span class="pt"></span><div><time>${esc(a.actor_id ? shortName(a.actor_id) : "System")} · ${fmtDateTime(a.created_at, state.tz)}</time>
-      <div class="body">${esc(what)}${a.note ? ` — “${esc(a.note)}”` : ""}${ch.length ? `<ul class="changes">${ch.map(([k, v]) => `<li>${FIELD_LABEL[k]}: <s>${esc(fmtVal(k, v[0]))}</s> → ${esc(fmtVal(k, v[1]))}</li>`).join("")}</ul>` : ""}</div></div></li>`;
+      <div class="body">${esc(what)}${a.note ? ` — “${esc(a.note)}”` : ""}${ch.length ? `<ul class="changes">${ch.map(([k, v, label]) => `<li>${esc(label || FIELD_LABEL[k])}: <s>${esc(fmtVal(label ? "" : k, v[0]))}</s> → ${esc(fmtVal(label ? "" : k, v[1]))}</li>`).join("")}</ul>` : ""}</div></div></li>`;
   }).join("")}</ol>`;
 }
 
@@ -316,6 +331,13 @@ export function handleTaskChange(e) {
     return true;
   }
   if (key === "project_id") { save({ project_id: el.value || null, milestone_id: null }); return true; }
+  if (key.startsWith("cf-")) {
+    const k = key.slice(3), d = (state.fieldDefs || []).find(x => x.key === k && x.workspace_id === t.workspace_id && !x.archived); if (!d) return true;
+    const v = d.type === "checkbox" ? el.checked : el.value.trim() === "" ? null : d.type === "number" ? Number(el.value) : el.value.trim();
+    if (d.type === "number" && v !== null && !Number.isFinite(v)) { toastError(`${d.label} must be a number.`); return true; }
+    if (((t.custom || {})[k] ?? null) !== v) save({ custom: { ...(t.custom || {}), [k]: v } });
+    return true;
+  }
   const v = el.value === "" ? null : el.value;
   if ((t[key] ?? null) !== v) save({ [key]: v });
   return true;
@@ -350,14 +372,14 @@ export async function handleTaskClick(act, el) {
     case "task-tab": sheetState.tab = el.dataset.tab; rerenderSheet(); if (sheetState.tab === "plan") loadContacts(sheetState.id); return true;
     case "complete-task": await setStatus(t, "completed"); rerenderSheet(); return true;
     case "review-request": {
-      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById);
+      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById, state.fieldDefs);
       if (blockers.length) return toastError("Finish first: " + blockers.join(", ") + "."), true;
       const note = await dialog({ title: `Ask ${nameOf(t.reviewer_id)} to review`, text: "Optional note for the reviewer (what to check, where the documents are).", input: { label: "Note", multiline: true }, confirm: "Request review" });
       if (note === null || note === undefined) return true;
       const r = await requestReview(t.id, note); if (r.error) return toastError(r.error), true;
       toast(`Sent to ${nameOf(t.reviewer_id)} for review`); rerenderSheet(); return true; }
     case "review-approve": {
-      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById);
+      const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById, state.fieldDefs);
       if (blockers.length) return toastError("Can't complete yet: " + blockers.join(", ") + "."), true;
       const r = await reviewTask(t.id, "approve"); if (r.error) return toastError(r.error), true;
       toast("Approved and completed"); rerenderSheet(); return true; }

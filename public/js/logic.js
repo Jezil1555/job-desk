@@ -48,8 +48,24 @@ export function taskProgress(task, subtasks) {
   return { value: task.status === "completed" ? 100 : task.progress || 0, basis: "manual" };
 }
 
+/** Custom fields that apply to a task: active, same workspace, and either workspace-wide or for the task's own project. */
+export function fieldsFor(task, defs) {
+  return (defs || []).filter(d => !d.archived && d.workspace_id === task.workspace_id && (!d.project_id || d.project_id === task.project_id))
+    .sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
+}
+/** Required fields still empty (a required checkbox must be ticked) — mirrors tasks_custom_guard. */
+export function missingRequired(task, defs) {
+  const c = task.custom || {};
+  return fieldsFor(task, defs).filter(d => d.required && (d.type === "checkbox" ? c[d.key] !== true : c[d.key] === undefined || c[d.key] === null || c[d.key] === ""));
+}
+/** A stable key from a label: lower-case letters, digits and underscores, starting with a letter. */
+export function fieldKey(label) {
+  let k = String(label || "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!/^[a-z]/.test(k)) k = "f_" + k;
+  return k.replace(/_+$/, "").slice(0, 40) || "field";
+}
 /** Why a task can't be completed right now (mirrors the database rule). Empty array = can complete. */
-export function completionBlockers(task, subtasks, deps, tasksById) {
+export function completionBlockers(task, subtasks, deps, tasksById, defs) {
   const out = [];
   const crit = Array.isArray(task.completion_criteria) ? task.completion_criteria : [];
   const unticked = crit.filter(c => !c.done);
@@ -59,6 +75,8 @@ export function completionBlockers(task, subtasks, deps, tasksById) {
   const pre = openPrerequisites(task, deps, tasksById);
   if (pre.length) out.push(`${pre.length} prerequisite task${pre.length === 1 ? "" : "s"} still open`);
   if (task.reviewer_id && task.review_status !== "approved") out.push("the reviewer hasn't approved it yet");
+  const miss = defs ? missingRequired(task, defs) : [];
+  if (miss.length) out.push(`required field${miss.length === 1 ? "" : "s"} empty: ${miss.map(d => d.label).join(", ")}`);
   return out;
 }
 

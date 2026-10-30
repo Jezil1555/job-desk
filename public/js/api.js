@@ -35,14 +35,16 @@ export async function loadAll() {
     sb.from("habits").select("*").order("sort").order("created_at"),
     sb.from("habit_logs").select("habit_id, log_date, value, note").gte("log_date", new Date(Date.now() - 400 * DAY).toISOString().slice(0, 10)),
     sb.from("health_logs").select("*").gte("log_date", new Date(Date.now() - 400 * DAY).toISOString().slice(0, 10)).order("log_date", { ascending: false }),
-    sb.from("weekly_reviews").select("*").order("week_start", { ascending: false }).limit(26)
+    sb.from("weekly_reviews").select("*").order("week_start", { ascending: false }).limit(26),
+    sb.from("field_defs").select("*").order("sort").order("label"),
+    sb.from("project_templates").select("*").order("name")
   ]);
   const err = q.find(r => r.error);
   if (err) throw err.error;
-  const [ws, mem, prof, proj, health, ms, tasks, deps, fus, contacts, notifs, comments, activity, notesK, docs, links, goals, habits, habitLogs, healthLogs, reviews] = q.map(r => r.data || []);
+  const [ws, mem, prof, proj, health, ms, tasks, deps, fus, contacts, notifs, comments, activity, notesK, docs, links, goals, habits, habitLogs, healthLogs, reviews, fieldDefs, templates] = q.map(r => r.data || []);
   Object.assign(state, {
     workspaces: ws, members: mem, projects: proj, health, milestones: ms, tasks, deps, followUps: fus, contacts,
-    notifications: notifs, lastComments: comments, activity, notes: notesK, documents: docs, links, goals, habits, habitLogs, healthLogs, reviews,
+    notifications: notifs, lastComments: comments, activity, notes: notesK, documents: docs, links, goals, habits, habitLogs, healthLogs, reviews, fieldDefs, templates,
     loaded: true, loadedAt: Date.now()
   });
   state.profiles = {}; prof.forEach(p => (state.profiles[p.id] = p));

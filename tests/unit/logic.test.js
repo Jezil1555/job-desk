@@ -114,3 +114,22 @@ test("a task with a reviewer can't be completed until approved", async () => {
   assert.ok(involves(t, "u1") && involves(t, "u2") && involves(t, "u3") && !involves(t, "u4"));
   assert.ok(!involves({ ...t, review_status: "approved" }, "u2"));
 });
+
+import { fieldsFor, missingRequired, fieldKey } from "../../public/js/logic.js";
+test("custom fields: workspace-wide and own-project fields apply; archived and other projects don't", () => {
+  const defs = [{ id: 1, workspace_id: "w", project_id: null, key: "fabric", label: "Fabric", type: "select", required: false, sort: 0 },
+    { id: 2, workspace_id: "w", project_id: "p1", key: "groom", label: "Groom", type: "text", required: true, sort: 0 },
+    { id: 3, workspace_id: "w", project_id: "p2", key: "venue", label: "Venue", type: "text", required: true, sort: 0 },
+    { id: 4, workspace_id: "w", project_id: null, key: "qc", label: "QC passed", type: "checkbox", required: true, sort: 1 },
+    { id: 5, workspace_id: "w", project_id: null, key: "old", label: "Old", type: "text", required: true, sort: 0, archived: true },
+    { id: 6, workspace_id: "x", project_id: null, key: "other", label: "Other", type: "text", required: true, sort: 0 }];
+  const t = { workspace_id: "w", project_id: "p1", custom: { groom: "Faisal", qc: false } };
+  assert.deepEqual(fieldsFor(t, defs).map(d => d.key), ["fabric", "groom", "qc"]);
+  assert.deepEqual(missingRequired(t, defs).map(d => d.key), ["qc"]);
+  assert.deepEqual(missingRequired({ ...t, custom: { groom: "", qc: true } }, defs).map(d => d.key), ["groom"]);
+});
+test("field keys are safe and stable", () => {
+  assert.equal(fieldKey("Chest (cm)"), "chest_cm");
+  assert.equal(fieldKey("2nd fitting"), "f_2nd_fitting");
+  assert.equal(fieldKey("Café — owner"), "cafe_owner");
+});

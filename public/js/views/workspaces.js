@@ -7,6 +7,7 @@ import { phRow, actRow } from "./home.js";
 import { linkedPanel, NOTE_KIND, DOC_CATEGORY } from "../sheets/knowledge.js";
 import { sb, run } from "../api.js";
 import { ago } from "../util.js";
+import { renderSetup } from "./setup.js";
 
 export function renderWorkspaces(view) {
   const list = state.workspaces;
@@ -38,11 +39,12 @@ export function renderWorkspace(view, id, tab = "projects") {
   const ts = state.tasks.filter(t => t.workspace_id === id && !t.deleted_at);
   const fus = state.followUps.filter(f => f.workspace_id === id);
   const contacts = state.contacts.filter(c => c.workspace_id === id);
-  const tabs = { projects: `Projects · ${projs.filter(p => !p.archived).length}`, tasks: `Tasks · ${ts.filter(isOpen).length}`, followups: `Follow-ups · ${fus.filter(f => ["open", "escalated"].includes(f.status)).length}`, contacts: `Contacts · ${contacts.length}`, knowledge: `Notes & docs · ${state.notes.filter(n => n.workspace_id === id).length + state.documents.filter(d => d.workspace_id === id).length}`, activity: "Activity" };
+  const tabs = { projects: `Projects · ${projs.filter(p => !p.archived).length}`, tasks: `Tasks · ${ts.filter(isOpen).length}`, followups: `Follow-ups · ${fus.filter(f => ["open", "escalated"].includes(f.status)).length}`, contacts: `Contacts · ${contacts.length}`, knowledge: `Notes & docs · ${state.notes.filter(n => n.workspace_id === id).length + state.documents.filter(d => d.workspace_id === id).length}`, setup: "Fields & templates", activity: "Activity" };
   let body = "";
   if (tab === "projects") {
     const active = projs.filter(p => !p.archived);
-    body = (writable ? `<div class="toolbar"><button class="btn primary" data-act="new-project" data-ws="${id}">${ICON.plus}New project</button></div>` : "") +
+    const tpls = (state.templates || []).filter(t => t.workspace_id === id && !t.archived);
+    body = (writable ? `<div class="toolbar"><button class="btn primary" data-act="new-project" data-ws="${id}">${ICON.plus}New project</button>${tpls.length ? `<a class="btn" href="#/w/${id}/setup">From a template…</a>` : ""}</div>` : "") +
       (active.length ? `<div class="ph-list">${active.map(phRow).join("")}</div>` : emptyState("No projects yet", "Group related tasks and milestones into a project to track progress and health.")) +
       (projs.some(p => p.archived) ? section("Archived", `<div class="ph-list">${projs.filter(p => p.archived).map(phRow).join("")}</div>`) : "");
   } else if (tab === "tasks") {
@@ -61,6 +63,8 @@ export function renderWorkspace(view, id, tab = "projects") {
       (ns.length ? section("Notes", `<div class="list">${ns.slice(0, 50).map(n => `<div class="trow" data-act="open-note" data-id="${n.id}" role="button" tabindex="0"><span class="kico">${ICON.notes}</span><div class="tmain"><div class="ttitle">${esc(n.title)}</div><div class="tmeta">${NOTE_KIND[n.kind]} · ${ago(n.updated_at)}</div></div></div>`).join("")}</div>`, { count: ns.length }) : "") +
       (ds.length ? section("Documents", `<div class="list">${ds.slice(0, 50).map(d => `<div class="trow" data-act="open-doc" data-id="${d.id}" role="button" tabindex="0"><span class="kico">${d.kind === "link" ? ICON.link : ICON.download}</span><div class="tmain"><div class="ttitle">${esc(d.title)}</div><div class="tmeta">${DOC_CATEGORY[d.category]} · ${ago(d.created_at)}</div></div></div>`).join("")}</div>`, { count: ds.length }) : "") +
       (!ns.length && !ds.length ? emptyState("No notes or documents yet", "Keep meeting notes, decisions, invoices and certificates for this workspace in one place.") : "");
+  } else if (tab === "setup") {
+    body = renderSetup(id);
   } else if (tab === "activity") {
     const cached = wsActivity.get(id);
     if (!cached || Date.now() - (wsActivityAt.get(id) || 0) > 60000) { wsActivityAt.set(id, Date.now()); loadWsActivity(id); }
@@ -108,7 +112,7 @@ export function renderProject(view, id) {
   const pct = h.progress ?? null;
   view.innerHTML = `
   <div class="page-head"><div><p class="crumb"><a href="#/workspaces">Workspaces</a> / <a href="#/w/${w.id}">${esc(w.name)}</a></p><h1>${esc(p.name)}</h1>${p.description ? `<p class="sub">${esc(p.description)}</p>` : ""}</div>
-    <div class="filters">${writable ? `<button class="btn sm" data-act="edit-project" data-id="${id}">${ICON.settings}Project settings</button>` : ""}</div></div>
+    <div class="filters">${writable ? `<button class="btn sm" data-act="save-template" data-id="${id}">Save as template</button><button class="btn sm" data-act="edit-project" data-id="${id}">${ICON.settings}Project settings</button>` : ""}</div></div>
   <section class="proj-hero">
     <div class="ph-col"><span class="k">Status</span><div>${projectPill(h.effective_status || "on_track")}</div>${p.manual_status ? `<span class="calc-note">Manual: “${esc(p.manual_status_reason || "")}” · calculated ${PROJECT_STATUS_LABEL[h.calculated_status] || ""}</span>` : h.reasons && h.reasons.length ? `<span class="calc-note">${esc(h.reasons.join(" · "))}</span>` : ""}</div>
     <div class="ph-col"><span class="k">Progress</span><div class="ph-bar big"><div class="bar"><i style="width:${pct || 0}%"></i></div><b class="num">${pct === null ? "—" : pct + "%"}</b></div><span class="calc-note">${h.progress_basis === "milestones" ? "weighted by completed milestones" : h.progress_basis === "tasks" ? "share of completed top-level tasks" : "add milestones or tasks to measure progress"}</span></div>

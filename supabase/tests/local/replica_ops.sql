@@ -58,3 +58,5 @@ create table if not exists net.calls (id bigserial primary key, url text, body j
 create or replace function net.http_post(url text, body jsonb, headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ insert into net.calls (url, body) values (url, body) returning id $$;
 create function public.dispatch_push() returns trigger language plpgsql security definer set search_path = '' as $$ begin /* ORIGINAL-PUSH */ return new; end $$;
 create trigger notifications_push after insert on public.notifications for each row execute function public.dispatch_push();
+-- match production: the app role reads activity but never writes it directly (only system functions do)
+revoke insert, update, delete on public.activity from authenticated;
