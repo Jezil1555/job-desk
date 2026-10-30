@@ -74,7 +74,8 @@ do $$ begin insert into public.notes (workspace_id, title) values ((select v fro
 exception when others then insert into r(name, ok, detail) values ('viewer cannot add notes', sqlerrm like '%row-level security%', sqlerrm); end $$;
 do $$ begin insert into storage.objects (bucket_id, name, owner) values ('documents', (select v from ids where k='ws')::text || '/x2/v.pdf', 'bbbbbbbb-0000-4000-8000-00000000000b'); insert into r(name, ok) values ('viewer cannot upload files', false);
 exception when others then insert into r(name, ok, detail) values ('viewer cannot upload files', sqlerrm like '%row-level security%', sqlerrm); end $$;
-with d as (delete from storage.objects where bucket_id = 'documents' returning 1) insert into r(name, ok) select 'viewer cannot delete files', count(*) = 0 from d;
+-- storage rows can't be deleted with SQL (Supabase guard), so test the check the delete policy uses
+insert into r(name, ok) select 'viewer fails the write check used by the file-delete policy', not public.can_write_ws((select v from ids where k='ws'));
 with d as (delete from public.record_links returning 1) insert into r(name, ok) select 'viewer cannot remove links', count(*) = 0 from d;
 insert into r(name, ok) select 'co-member cannot see another person''s goals, habits, check-ins, health logs or reviews',
   (select count(*) from public.goals) = 0 and (select count(*) from public.habits) = 0 and (select count(*) from public.habit_logs) = 0 and (select count(*) from public.health_logs) = 0 and (select count(*) from public.weekly_reviews) = 0;

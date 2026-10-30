@@ -42,7 +42,9 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 ### Verification
 - Unit tests: `npm test` → 29/29 (adds 12 for habits, streaks, action items, weekly report, workload, milestones, CSV).
 - End-to-end UI: `python3 tests/e2e/run.py` → 71/71 (adds 34: meeting → reviewed tasks with no deadlines, decision validation, file upload to workspace folder + signed link + delete, habit tick/untick and future lock, goal progress, health log, daily/weekly/project/workload reports, weekly review upsert, CSV download, workspace tabs, note search, phone layouts).
-- Database tests: `supabase/tests/phase2_tests.sql` written (RLS for owner/viewer/outsider/anon on notes, documents, links and storage; cross-workspace link rejection; private goals/habits; habit date rule) — see the run status reported alongside this release.
+- Database tests: `supabase/tests/phase2_tests.sql` → 31/31 pass on the live project in a rolled-back transaction (owner/viewer/outsider/anonymous access to notes, documents, links and stored files; cross-workspace and missing-record links rejected; goals/habits/health/reviews private even from co-members; habit date rule; audit). Verified afterwards: no test users, workspaces or files left; documents bucket private, 25 MB limit. Storage rows can't be deleted from SQL (Supabase guard), so file-delete access is tested through the write check its policy uses.
+- Security advisor (2026-10-30): no new findings from Phase 2; remaining warnings are the intentional ones listed under Phase 1.
+- Deployed: Render deploy `dep-dbhnfmh5efls7394ek40` live.
 
 ### Known limitations
 - Linking an existing note/document from a task uses a numbered picker; a searchable picker is a later refinement.
