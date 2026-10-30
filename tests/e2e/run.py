@@ -128,6 +128,13 @@ def handle(route):
     if path in ("/storage/v1/object/documents", "/storage/v1/object/finance") and req.method == "DELETE":
         for k in json.loads(req.post_data or "{}").get("prefixes", []): STORAGE.pop(k, None)
         return reply([])
+    if path.startswith("/functions/v1/gcal-sync"):
+        body = json.loads(req.post_data or "{}"); GCAL["calls"].append(body.get("action"))
+        if body.get("action") == "status": return reply({"configured": GCAL["configured"], "redirect_uri": "https://lvusersarnzzamdgvxgm.supabase.co/functions/v1/gcal-sync/callback", "sync": GCAL["sync"]})
+        if body.get("action") == "start": return reply({"url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=test&scope=openid+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar.events"})
+        if body.get("action") == "resync": return reply({"synced": 4, "error": None})
+        if body.get("action") == "disconnect": GCAL["sync"] = None; return reply({"ok": True, "removed": 8})
+        return reply({"error": "Unknown action."}, 400)
     if path.startswith("/functions/v1/assistant"):
         body = json.loads(req.post_data or "{}"); AI_CALLS.append(body.get("action"))
         prof = next(p for p in DB["profiles"] if p["id"] == ME); on = bool((prof.get("prefs") or {}).get("ai_enabled"))
@@ -338,6 +345,7 @@ def fin_rpc(fn, b):
         st["status"] = "matched"; st["matched_line_id"] = l["id"]; l["statement_line_id"] = st["id"]; return None
     raise FinError("not implemented in test fake: " + fn)
 
+GCAL = {"configured": False, "sync": None, "calls": []}
 results, errors = [], []
 def check(name, cond, detail=""):
     results.append((name, bool(cond), detail))
@@ -779,6 +787,26 @@ with sync_playwright() as pw:
         check("all five reports export to one workbook", len(wb2.sheetnames) >= 6 and any("ageing" in n.lower() for n in wb2.sheetnames), str(wb2.sheetnames))
     except Exception as ex_: check("all five reports export to one workbook", False, str(ex_))
     shot(page, "23-partner-statement", True)
+    ctx.close()
+
+
+    # ---------- Google Calendar live sync (simulated Google) ----------
+    ctx, page = new_page(b, 1366, 900)
+    page.route(re.compile(r"https://accounts\.google\.com/.*"), lambda r: r.fulfill(body="google sign-in", content_type="text/html"))
+    page.goto(BASE + "/#/settings"); page.wait_for_selector("#ig-gcal .banner")
+    check("Google Calendar: setup steps and redirect URI shown until the app is configured", "GOOGLE_CLIENT_ID" in page.inner_text("#ig-gcal") and page.input_value("#ig-gredir").endswith("/functions/v1/gcal-sync/callback"))
+    GCAL["configured"] = True
+    page.reload(); page.wait_for_selector('[data-act="ig-gcal-connect"]')
+    with page.expect_navigation(url=re.compile(r"https://accounts\.google\.com/.*")): page.click('[data-act="ig-gcal-connect"]')
+    check("Connect sends you to Google asking only for calendar events", "calendar.events" in page.url and "calendar.readonly" not in page.url, page.url)
+    GCAL["sync"] = {"google_email": "jezz@example.com", "status": "connected", "last_error": None, "last_synced_at": iso(now), "connected_at": iso(now)}
+    page.goto(BASE + "/#/settings?gcal=connected"); page.wait_for_selector('[data-act="ig-gcal-resync"]'); page.wait_for_timeout(200)
+    check("after Google returns: connected account shown with a confirmation", "jezz@example.com" in page.inner_text("#ig-gcal") and "connected" in page.inner_text("#toast").lower())
+    page.click('[data-act="ig-gcal-resync"]'); page.wait_for_timeout(400)
+    check("Sync all now reports how many tasks were synced", "4 tasks synced" in page.inner_text("#toast"))
+    shot(page, "24-google-calendar-settings")
+    page.click('[data-act="ig-gcal-off"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]'); page.wait_for_selector('[data-act="ig-gcal-connect"]')
+    check("Disconnect asks first, then shows Connect again", "disconnect" in GCAL["calls"])
     ctx.close()
 
     # ---------- phone, light + dark ----------

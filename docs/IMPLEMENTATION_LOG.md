@@ -99,3 +99,9 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 - Tests: `supabase/tests/phase5_partner_tests.sql` 61/61 locally, 59/59 on production (rolled back, before the settles test was added); unit 71/71; e2e 139/139.
 - Import (production, as Jezz): 16 lines PR-0001…PR-0016. Lines 1–9 = historical QAR 7,066 (`legacy_7066`). September lines dated 30 Sep 2026, `month_only_date`, payment date blank. Best-guess accounts flagged (PR-0001, 0010, 0012, 0013). PR-0016 settles PR-0015. New account 6410 Vehicle expenses. Verified: Dlusso 2300/Jezz = 9,623.50 Cr; Personal 1100/Dlusso = 9,623.50 Dr; both trial balances balance.
 - COA mapping used: 1200 Partner receivable → Dlusso 2300 (liability) + Personal 1100 (asset); 1300 Fabric → 1200 Inventory; 5100 COGS → 5000; 6100 Staff → 6100; 6200 Freight → 6400; 6300 Vehicle → 6410 (new); 6400 General → 6900; 6500 Bank charges → 6500.
+
+## Live Google Calendar sync, 30 Oct 2026
+- Migration `20261030190000_google_calendar_sync.sql`: `calendar_sync` (status, own row readable), `gcal_tokens` (no client access), `dispatch_gcal` triggers on tasks → pg_net → edge function `gcal-sync/task` with a shared secret.
+- Edge function `gcal-sync` (verify_jwt off, own checks): status/start/resync/disconnect (user session), `/callback` (signed 10-minute state), `/task` (secret). Scope `calendar.events` only. Deterministic event ids per task + kind, so retries never duplicate; completed/cancelled/deleted tasks remove their events; reassigned tasks move calendars.
+- Tests: 8 unit, 5 e2e, 6 live DB checks (rolled back); live probes 403 / 401 / forged state → "expired".
+- Needs secrets GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (Google Cloud OAuth web client, redirect URI shown in Settings).
