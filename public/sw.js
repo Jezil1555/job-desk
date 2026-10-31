@@ -1,5 +1,5 @@
-// Job Desk service worker: offline app shell + phone push notifications.
-const CACHE = "jobdesk-v17";
+// Jezz HQ service worker: offline app shell + phone push notifications.
+const CACHE = "jezzhq-v18";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/config.js", "/manifest.webmanifest",
   "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/smart.js", "/js/assist.js", "/js/partners.js", "/js/xlsx.js", "/js/api.js", "/js/store.js", "/js/ui.js",
@@ -33,8 +33,8 @@ self.addEventListener("fetch", e => {
 
 self.addEventListener("push", e => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "Job Desk", body: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.title || "Job Desk", {
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "Jezz HQ", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Jezz HQ", {
     body: d.body || "",
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",

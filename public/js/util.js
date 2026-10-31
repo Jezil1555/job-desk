@@ -97,6 +97,6 @@ export function friendlyError(err) {
   if (/violates row-level security|permission denied/i.test(msg)) return "You don't have permission to change this.";
   if (/Failed to fetch|NetworkError|network/i.test(msg)) return "You're offline or the server can't be reached. Nothing was saved.";
   if (/duplicate key/i.test(msg)) return "That already exists.";
-  if (/not_registered/.test(msg)) return "That email doesn't have a Job Desk account yet.";
+  if (/not_registered/.test(msg)) return "That email doesn't have a Jezz HQ account yet.";
   return msg || "Something went wrong. Nothing was saved.";
 }

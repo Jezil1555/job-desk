@@ -161,10 +161,10 @@ export const isStandalone = () => window.matchMedia("(display-mode: standalone)"
 export const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 export function pushCard() {
   if (pushSupported() && Notification.permission === "granted") return "";
-  if (isIOS && !isStandalone()) return `<div class="banner info"><b>Phone alerts on iPhone:</b> add Job Desk to your Home Screen (Share → Add to Home Screen), open it from there, then turn on notifications.</div>`;
+  if (isIOS && !isStandalone()) return `<div class="banner info"><b>Phone alerts on iPhone:</b> add Jezz HQ to your Home Screen (Share → Add to Home Screen), open it from there, then turn on notifications.</div>`;
   if (!pushSupported()) return `<div class="banner muted">This browser can't show phone notifications. In-app alerts still work.</div>`;
-  if (Notification.permission === "denied") return `<div class="banner warn">Notifications are blocked for Job Desk. Allow them in your browser or phone settings.</div>`;
-  return `<div class="banner info"><span>Get reminders on this device even when Job Desk is closed.</span> <button class="btn sm primary" data-act="enable-push">Turn on notifications</button></div>`;
+  if (Notification.permission === "denied") return `<div class="banner warn">Notifications are blocked for Jezz HQ. Allow them in your browser or phone settings.</div>`;
+  return `<div class="banner info"><span>Get reminders on this device even when Jezz HQ is closed.</span> <button class="btn sm primary" data-act="enable-push">Turn on notifications</button></div>`;
 }
 
 /* ======================= Settings ======================= */
@@ -190,7 +190,7 @@ export function renderSettings(view) {
     <div class="btnrow"><button class="btn" data-act="export-csv">${ICON.download}Tasks (CSV)</button><button class="btn" data-act="export-json">${ICON.download}Full backup (JSON)</button></div>
     <p class="hint">The database is also backed up daily by Supabase.</p>`)}
   ${section("Account", `<button class="btn" data-act="sign-out">Sign out</button>`)}
-  <p class="hint center">Job Desk · <a href="https://github.com/Jezil1555/job-desk" target="_blank" rel="noopener">source</a></p>
+  <p class="hint center">Jezz HQ · <a href="https://github.com/Jezil1555/job-desk" target="_blank" rel="noopener">source</a></p>
   </div>`;
 }
 export async function handleSettingsChange(e) {

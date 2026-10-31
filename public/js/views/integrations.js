@@ -32,7 +32,7 @@ function gcalHtml() {
     <li>In Supabase → Edge Functions → Secrets add <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>, then reload this page.</li></ol></div>`;
   const sy = g.sync;
   if (!sy) return intro + `<div class="btnrow"><button class="btn primary" data-act="ig-gcal-connect">Connect Google Calendar</button></div>
-    <p class="hint">Google will ask you to allow Job Desk to manage events in your calendar. If you subscribed to the calendar link below in Google, remove that subscription after connecting so tasks don't show twice.</p>`;
+    <p class="hint">Google will ask you to allow Jezz HQ to manage events in your calendar. If you subscribed to the calendar link below in Google, remove that subscription after connecting so tasks don't show twice.</p>`;
   return intro + (sy.status === "error" ? `<div class="banner bad"><b>Sync stopped.</b> ${esc(sy.last_error || "")} <button class="btn sm" data-act="ig-gcal-connect">Reconnect</button></div>` : "")
     + `<p>${ICON.done} Connected to <b>${esc(sy.google_email || "Google")}</b>${sy.last_synced_at ? ` · last update ${ago(sy.last_synced_at)}` : ""}.</p>
     ${sy.status !== "error" && sy.last_error ? `<p class="hint">Last problem: ${esc(sy.last_error)}</p>` : ""}
@@ -55,7 +55,7 @@ function calHtml() {
 function aiHtml() {
   const s = ig(), on = !!state.prefs.ai_enabled, st = s.ai;
   return `<label class="check"><input type="checkbox" id="ig-ai-on" ${on ? "checked" : ""}> Use the AI assistant</label>
-  <p class="hint">When you press an AI button, only the text needed for that request is sent to Anthropic's Claude API (for example the meeting notes you're summarising, or the bank lines you're categorising). Nothing is sent automatically. Every result is a suggestion you review — the assistant can't create tasks, change dates or owners, close commitments, post or delete entries, confirm payments or send messages. Job Desk keeps each suggestion and what you did with it (below); the text you sent is not stored.</p>
+  <p class="hint">When you press an AI button, only the text needed for that request is sent to Anthropic's Claude API (for example the meeting notes you're summarising, or the bank lines you're categorising). Nothing is sent automatically. Every result is a suggestion you review — the assistant can't create tasks, change dates or owners, close commitments, post or delete entries, confirm payments or send messages. Jezz HQ keeps each suggestion and what you did with it (below); the text you sent is not stored.</p>
   ${on ? (!st || st.loading ? `<p class="hint">Checking…</p>` : st.error ? `<p class="bad-text">${esc(st.error)}</p>` : st.configured
     ? `<p>${ICON.done} Ready · ${st.used_24h} of ${st.limit} requests used in the last 24 hours · model ${esc(st.model)}</p>`
     : `<div class="banner warn"><b>Needs an API key.</b> In the Supabase dashboard open Edge Functions → Secrets and add <code>ANTHROPIC_API_KEY</code> with a key from console.anthropic.com. Then reload this page.</div>`) : ""}
@@ -78,7 +78,7 @@ export async function handleIntegrationsClick(act, el) {
     case "ig-gcal-connect": { const r = await gcalCall("start"); if (r.error || !r.data?.url) return toastError(r.error || "Couldn't start Google sign-in"), true; location.href = r.data.url; return true; }
     case "ig-gcal-resync": { el.disabled = true; const r = await gcalCall("resync"); el.disabled = false; if (r.error) return toastError(r.error), true;
       toast(r.data.error ? r.data.error : `${r.data.synced} task${r.data.synced === 1 ? "" : "s"} synced`); s.gcal = undefined; repaint(); integrationsHtml(); return true; }
-    case "ig-gcal-off": { if (!(await dialog({ title: "Disconnect Google Calendar?", text: "Job Desk will remove the task events it added and stop syncing. Your other calendar events aren't touched.", confirm: "Disconnect", danger: true }))) return true;
+    case "ig-gcal-off": { if (!(await dialog({ title: "Disconnect Google Calendar?", text: "Jezz HQ will remove the task events it added and stop syncing. Your other calendar events aren't touched.", confirm: "Disconnect", danger: true }))) return true;
       const r = await gcalCall("disconnect"); if (r.error) return toastError(r.error), true; s.gcal = { ...s.gcal, sync: null }; repaint(); toast("Google Calendar disconnected"); return true; }
     case "ig-copy": { const i = $(el.dataset.src || "ig-url"); try { await navigator.clipboard.writeText(i.value); toast("Copied"); } catch (e) { i.select(); toast("Press Ctrl/Cmd+C to copy"); } return true; }
     case "ig-cal-new": {

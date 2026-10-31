@@ -11,7 +11,7 @@ test("iCal output: timed and all-day events, escaping, CRLF", () => {
   assert.ok(ics.startsWith("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n")); assert.ok(ics.endsWith("END:VCALENDAR\r\n"));
   assert.match(ics, /DTSTART:20261030T120000Z\r\nDTEND:20261030T123000Z/);
   assert.match(flat, /SUMMARY:Due: Book container\\; urgent\\, today/);
-  assert.match(flat, /DESCRIPTION:QCLOUD\\nNext: call agent\\nOpen in Job Desk: https:\/\/job-desk-u8nj.onrender.com\/#\/t\/1/);
+  assert.match(flat, /DESCRIPTION:QCLOUD\\nNext: call agent\\nOpen in Jezz HQ: https:\/\/job-desk-u8nj.onrender.com\/#\/t\/1/);
   assert.match(ics, /DTSTART;VALUE=DATE:20261102\r\nDTEND;VALUE=DATE:20261103/);
   assert.match(ics, /DTSTART;VALUE=DATE:20261031/); // 22:30 UTC is already 31 Oct in Doha
   assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 3);

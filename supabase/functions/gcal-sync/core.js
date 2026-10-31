@@ -27,11 +27,11 @@ export function desiredEvents(task, userId, { tz = "Asia/Qatar", workspace = "",
   const link = appUrl ? `${appUrl.replace(/\/$/, "")}/#/t/${task.id}` : "";
   const base = (kind, lines) => ({
     id: eventId(task.id, kind),
-    description: [workspace && `Workspace: ${workspace}`, ...lines, link && `Open in Job Desk: ${link}`].filter(Boolean).join("\n"),
+    description: [workspace && `Workspace: ${workspace}`, ...lines, link && `Open in Jezz HQ: ${link}`].filter(Boolean).join("\n"),
     status: "confirmed",
     transparency: "transparent",
     extendedProperties: { private: { jobdesk_task: task.id, jobdesk_kind: kind } },
-    source: link ? { title: "Job Desk", url: link } : undefined
+    source: link ? { title: "Jezz HQ", url: link } : undefined
   });
   const at = (iso, allDay, mins) => allDay
     ? { start: { date: localDate(iso, tz) }, end: { date: nextDay(localDate(iso, tz)) } }

@@ -34,7 +34,7 @@ function render(sh) {
       <button class="btn" data-act="dr-copy">Copy</button>
       ${aiOn() ? `<button class="btn" data-act="dr-ai" id="drAi">✨ Rewrite with AI</button>` : `<small class="hint">Turn on the AI assistant in Settings to get a rewritten draft.</small>`}
     </div>
-    <p class="hint">Nothing is sent from Job Desk — the message opens in your own app for you to send. After sending, record it below so the log stays accurate.</p>
+    <p class="hint">Nothing is sent from Jezz HQ — the message opens in your own app for you to send. After sending, record it below so the log stays accurate.</p>
     <div class="btnrow"><button class="btn" data-act="dr-log">${ICON.check}I sent it — log it</button></div>
   </div>`;
 }

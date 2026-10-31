@@ -343,7 +343,7 @@ function settings(e) {
   </form>`)}
   ${section("People with access", `<ul class="plain">${ms.map(m => `<li><b>${esc(nameOf(m.user_id))}</b> — ${owner && m.user_id !== state.user.id ? `<select class="input sm" data-act="fin-role" data-user="${m.user_id}">${["owner", "bookkeeper", "viewer"].map(r => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}</select>
       <button class="linkbtn" data-act="fin-remove-member" data-user="${m.user_id}">Remove</button>` : esc(m.role)}</li>`).join("")}</ul>
-    ${owner ? `<form id="finMemberForm" class="addrow"><input class="input" type="email" id="fm-email" placeholder="their Job Desk email" required><select class="input" id="fm-role" style="max-width:9em"><option value="viewer">viewer</option><option value="bookkeeper">bookkeeper</option><option value="owner">owner</option></select><button class="btn" type="submit">Add</button></form>
+    ${owner ? `<form id="finMemberForm" class="addrow"><input class="input" type="email" id="fm-email" placeholder="their Jezz HQ email" required><select class="input" id="fm-role" style="max-width:9em"><option value="viewer">viewer</option><option value="bookkeeper">bookkeeper</option><option value="owner">owner</option></select><button class="btn" type="submit">Add</button></form>
     <p class="hint">Viewers can read; bookkeepers can enter and post; owners can also lock periods and manage access. Access to books is separate from workspace access.</p>` : ""}
     <h3>Change log</h3><div id="finAudit"><button class="btn sm" data-act="fin-audit">Show recent changes</button></div>`)}</div>`;
 }

@@ -87,7 +87,7 @@ function render() {
     view.innerHTML = `<div class="banner bad">This screen hit an error and couldn't be shown. Your data is safe. <button class="linkbtn" data-act="reload">Reload</button></div>`;
   }
   $("pageTitle").textContent = title;
-  document.title = `${title} · Job Desk`;
+  document.title = `${title} · Jezz HQ`;
 }
 let pendingOpen = null;
 const openDeep = (k, id) => ({ t: openTask, f: openFollowUp, n: openNote, d: openDocument })[k](id);
@@ -102,7 +102,7 @@ function renderNav() {
   } : {};
   const saved = state.prefs.saved_views || [];
   $("sidenav").innerHTML = `
-    <div class="brand"><img src="/icons/icon-192.png" alt="" width="28" height="28"><span>Job Desk</span></div>
+    <div class="brand"><img src="/icons/icon-192.png" alt="" width="28" height="28"><span>Jezz HQ</span></div>
     <button class="capture-btn" data-act="capture">${ICON.plus}<span>Quick capture</span><kbd>N</kbd></button>
     <nav aria-label="Main">${NAV.map(n => `<a href="${n.href}" class="${k === n.key ? "on" : ""} ${n.soon ? "soon" : ""}">${ICON[n.icon]}<span>${n.label}</span>${n.soon ? `<small>${n.soon}</small>` : counts[n.key] ? `<b class="cnt">${counts[n.key]}</b>` : ""}</a>`).join("")}</nav>
     ${k === "tasks" || saved.length ? `<div class="subnav"><p>Task views</p>
@@ -285,7 +285,7 @@ async function ensurePush() {
   try { const reg = await navigator.serviceWorker.ready; const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(cfg.vapidPublicKey) }); await saveSub(sub); } catch (e) {}
 }
 async function shareInvite() {
-  const data = { title: "Job Desk", text: "I use Job Desk to run my tasks, projects and follow-ups. Create your free account:", url: location.origin };
+  const data = { title: "Jezz HQ", text: "I use Jezz HQ to run my tasks, projects and follow-ups. Create your free account:", url: location.origin };
   if (navigator.share) { try { await navigator.share(data); return; } catch (e) { if (e.name === "AbortError") return; } }
   copyLink();
 }
@@ -297,7 +297,7 @@ function renderAuth(msg, email = "") {
   const titles = { signin: "Sign in", signup: "Create your account", reset: "Reset your password", newpass: "Choose a new password" };
   const btn = { signin: "Sign in", signup: "Create account", reset: "Send reset link", newpass: "Save password" };
   $("auth").innerHTML = `<form class="auth-card" id="authForm" novalidate>
-    <div class="brand"><img src="/icons/icon-192.png" width="44" height="44" alt=""><div><h1>Job Desk</h1><p>${titles[authMode]}</p></div></div>
+    <div class="brand"><img src="/icons/icon-192.png" width="44" height="44" alt=""><div><h1>Jezz HQ</h1><p>${titles[authMode]}</p></div></div>
     ${msg ? `<div class="formmsg ${msg.type}" role="alert">${esc(msg.text)}</div>` : ""}
     ${authMode === "signup" ? `<label class="field"><span>Your name</span><input class="input" id="af-name" autocomplete="name" maxlength="60"></label>` : ""}
     ${authMode !== "newpass" ? `<label class="field"><span>Email</span><input class="input" id="af-email" type="email" autocomplete="email" inputmode="email" value="${esc(email)}"></label>` : ""}

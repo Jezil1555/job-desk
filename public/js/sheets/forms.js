@@ -241,7 +241,7 @@ function renderWorkspace(sh) {
   ${f.id ? `<section class="sub"><div class="sub-h"><h3>People</h3><span class="c">${mem.length}</span></div>
     <ul class="mlist">${mem.map(m => `<li>${avatar(m.user_id, "lg")}<div style="min-width:0"><div class="mn">${esc(nameOf(m.user_id))}${m.user_id === state.user.id ? " (you)" : ""}</div><div class="me">${esc((state.profiles[m.user_id] || {}).email || "")}</div></div>
       ${m.role === "owner" ? `<span class="role">Owner</span>` : owner ? `<select class="input sm" data-act="ws-role" data-uid="${m.user_id}" aria-label="Role">${opt("member", m.role, "Member")}${opt("viewer", m.role, "Viewer (read-only)")}</select><button class="iconbtn" data-act="ws-remove" data-uid="${m.user_id}" aria-label="Remove">${ICON.close}</button>` : `<span class="role">${m.role}</span>`}</li>`).join("")}</ul>
-    ${owner ? `<form id="wsAddForm" class="addrow"><input class="input" id="wf-email" type="email" placeholder="Their Job Desk email"><select class="input" id="wf-role" style="max-width:9em">${opt("member", "member", "Member")}${opt("viewer", "", "Viewer")}</select><button class="btn primary" type="submit">Add</button></form>
+    ${owner ? `<form id="wsAddForm" class="addrow"><input class="input" id="wf-email" type="email" placeholder="Their Jezz HQ email"><select class="input" id="wf-role" style="max-width:9em">${opt("member", "member", "Member")}${opt("viewer", "", "Viewer")}</select><button class="btn primary" type="submit">Add</button></form>
       ${f.msg ? `<div class="formmsg ${f.msg.type}">${esc(f.msg.text)}</div>` : ""}
       <p class="hint">Members can add and edit everything in this workspace. Viewers can only read. Finance permissions will be set separately per entity in Phase 3.</p>` : `<button class="btn danger" data-act="ws-leave" data-id="${f.id}">Leave workspace</button>`}
   </section>
@@ -302,7 +302,7 @@ export async function handleFormSubmit(form) {
     case "wsAddForm": {
       const email = val("wf-email"); if (!/^\S+@\S+\.\S+$/.test(email)) { f.msg = { type: "err", text: "Enter a valid email." }; rerenderSheet(); return true; }
       const r = await run(sb.rpc("add_workspace_member", { p_workspace: f.id, p_email: email, p_role: val("wf-role") }));
-      f.msg = r.error ? { type: "err", text: /account yet|not_registered/.test(r.error + (r.raw && r.raw.message)) ? `${email} doesn't have a Job Desk account yet. Share the invite link from Settings first.` : r.error } : { type: "ok", text: "Added. They've been notified." };
+      f.msg = r.error ? { type: "err", text: /account yet|not_registered/.test(r.error + (r.raw && r.raw.message)) ? `${email} doesn't have a Jezz HQ account yet. Share the invite link from Settings first.` : r.error } : { type: "ok", text: "Added. They've been notified." };
       if (!r.error) await loadAll().catch(() => {});
       rerenderSheet(); return true;
     }

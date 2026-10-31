@@ -179,7 +179,7 @@ export function reportTableHtml(rep, c) {
     ${rows.map((r, i) => `<tr class="${bold.has(i) ? "total" : ""}">${r.map((v, j) => `<td class="${cols[j] && cols[j].money ? "num" : ""}">${bold.has(i) ? "<b>" : ""}${cellHtml(v, cols[j] && cols[j].money, c)}${bold.has(i) ? "</b>" : ""}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${cols.length}" class="calm">Nothing in this period.</td></tr>`}</tbody></table></div>`;
   return `<div class="report"><h2>${esc(rep.title)}</h2><p class="sub">${esc(rep.subtitle)}</p>${t(rep.columns, rep.rows, rep.bold)}
     ${rep.changes ? `<h3>Changes</h3>${rep.changes.rows.length ? t(rep.changes.columns, rep.changes.rows) : `<p class="calm">No edits recorded.</p>`}` : ""}
-    <p class="hint print-only">Printed ${fmtDate(today())} from Job Desk · figures from posted entries only.</p></div>`;
+    <p class="hint print-only">Printed ${fmtDate(today())} from Jezz HQ · figures from posted entries only.</p></div>`;
 }
 function statementView(c) {
   const u = pui(), mo = u.month || today().slice(0, 7), key = u.report || "statement", rep = reportFor(c, key, mo);

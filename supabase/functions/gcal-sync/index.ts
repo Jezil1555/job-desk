@@ -136,7 +136,7 @@ Deno.serve(async (req) => {
     if (action === "start") return json({ url: authUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, state: await signState(uid, await getSecret()), loginHint: u.user.email }) });
     if (action === "resync") return json(await resyncAll(uid));
     if (action === "disconnect") {
-      // remove the events Job Desk created, then forget the token
+      // remove the events Jezz HQ created, then forget the token
       const { sync } = await userCtx(uid);
       let removed = 0;
       if (sync) {

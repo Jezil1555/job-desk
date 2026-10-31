@@ -1,24 +1,24 @@
-/* Job Desk — Command Centre design system.
+/* Jezz HQ — Command Centre design system.
    Calm executive workspace: cool paper neutrals, one deep-blue accent, semantic colour only for state.
    Layout: persistent sidebar ≥1000px; top bar + bottom nav below. Detail opens in a side panel (desktop) or bottom sheet (phone). */
 :root {
-  --paper: #f4f5f7;
+  --paper: #f5f4f2;
   --surface: #ffffff;
-  --surface-2: #f8f9fb;
-  --sunken: #eef0f3;
-  --ink: #141a22;
-  --ink-2: #3a4553;
-  --muted: #637081;
-  --faint: #8d98a6;
-  --line: #e1e5ea;
-  --line-2: #d3d9e0;
-  --accent: #1d5a8e;
+  --surface-2: #faf9f7;
+  --sunken: #efedea;
+  --ink: #1b1a19;
+  --ink-2: #3f3c39;
+  --muted: #6b6661;
+  --faint: #948e88;
+  --line: #e5e2dd;
+  --line-2: #d7d3cd;
+  --accent: #b4470f;
   --accent-ink: #ffffff;
-  --accent-soft: #e5eef6;
-  --side: #151c26;
-  --side-ink: #c6cfda;
-  --side-dim: #7d8a99;
-  --side-hover: #1f2834;
+  --accent-soft: #fbeadf;
+  --side: #1c1c1e;
+  --side-ink: #d8d4cf;
+  --side-dim: #8b8680;
+  --side-hover: #2a292b;
   --crit: #a3241b; --crit-soft: #f8e3e1;
   --high: #c2410c; --high-soft: #fbeadf;
   --med: #a16207; --med-soft: #f8efd8;
@@ -26,9 +26,9 @@
   --ok: #217a4a; --ok-soft: #e1f2e8;
   --warn: #a35d00; --warn-soft: #fbefd8;
   --bad: #b3261e; --bad-soft: #fbe4e2;
-  --info: #1d5a8e; --info-soft: #e5eef6;
-  --shadow: 0 1px 2px rgba(20, 26, 34, .05), 0 8px 24px rgba(20, 26, 34, .08);
-  --shadow-lg: 0 20px 60px rgba(20, 26, 34, .22);
+  --info: #2f5f8a; --info-soft: #e6eef5;
+  --shadow: 0 1px 2px rgba(28, 26, 24, .05), 0 8px 24px rgba(28, 26, 24, .08);
+  --shadow-lg: 0 20px 60px rgba(28, 26, 24, .22);
   --r: 10px; --r-lg: 14px;
   --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -38,11 +38,11 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0e1319; --surface: #151c25; --surface-2: #19212b; --sunken: #111820; --ink: #e5eaf0; --ink-2: #c3ccd6; --muted: #93a0ae; --faint: #6d7a89;
-    --line: #253040; --line-2: #2f3b4c; --accent: #6aa8dc; --accent-ink: #0e1319; --accent-soft: #19304a;
-    --side: #0b1016; --side-ink: #c6cfda; --side-dim: #6f7c8b; --side-hover: #161e28;
+    --paper: #121212; --surface: #1a1a1b; --surface-2: #1f1f21; --sunken: #151516; --ink: #ece9e5; --ink-2: #cfcac4; --muted: #9c968f; --faint: #78726b;
+    --line: #2c2b2a; --line-2: #383634; --accent: #f0874a; --accent-ink: #161210; --accent-soft: #3a2416;
+    --side: #0c0c0d; --side-ink: #d8d4cf; --side-dim: #7d7872; --side-hover: #1c1b1b;
     --crit: #f28b82; --crit-soft: #3d1b19; --high: #f6a26b; --high-soft: #3a2415; --med: #e6b75a; --med-soft: #352a12; --low: #94a3b8; --low-soft: #1e2632;
-    --ok: #6cc391; --ok-soft: #15301f; --warn: #e6ac54; --warn-soft: #352610; --bad: #f28b82; --bad-soft: #3d1b19; --info: #6aa8dc; --info-soft: #19304a;
+    --ok: #6cc391; --ok-soft: #15301f; --warn: #e6ac54; --warn-soft: #352610; --bad: #f28b82; --bad-soft: #3d1b19; --info: #7fb0dc; --info-soft: #1a2a3a;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35); --shadow-lg: 0 20px 60px rgba(0, 0, 0, .6);
     color-scheme: dark;
   }
