@@ -1,0 +1,1 @@
+select 'gcal gone: ' || (to_regclass('public.calendar_sync') is null and to_regprocedure('public.dispatch_gcal()') is null)::text, 'triggers gone: ' || (not exists (select 1 from pg_trigger where tgname like 'tasks_gcal_%'))::text, 'settings gone: ' || (not exists (select 1 from private.settings where key like 'gcal_%'))::text;

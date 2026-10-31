@@ -564,6 +564,12 @@ def fin_rpc(fn, b):
 AI_PROPOSALS = {}
 GCAL = {"configured": False, "sync": None, "calls": []}
 results, errors = [], []
+def safe_click(page, sel, name):
+    try: page.wait_for_selector(sel, timeout=8000); page.click(sel)
+    except Exception as e: check(name, False, str(e)[:120])
+def owner_val(page):
+    try: page.wait_for_selector("#ai-owner-0", timeout=8000); return page.input_value("#ai-owner-0")
+    except Exception: return None
 def check(name, cond, detail=""):
     results.append((name, bool(cond), detail))
     print(("PASS " if cond else "FAIL ") + name + (f" — {detail}" if detail and not cond else ""))
@@ -700,9 +706,9 @@ with sync_playwright() as pw:
     check("meeting note saved with kind=meeting and today's date", mtg and mtg["kind"] == "meeting" and mtg["meeting_date"])
     page.click('[data-act="note-actions"]'); page.wait_for_selector(".actions-review")
     check("action items proposed for review (done item skipped)", page.locator(".actions-review li").count() == 2)
-    check("@Adil mapped to the workspace member", page.input_value("#ai-owner-0") == ADIL)
+    check("@Adil mapped to the workspace member", owner_val(page) == ADIL)
     before = len(DB["tasks"])
-    page.click('[data-act="ai-create"]'); page.wait_for_timeout(900)
+    safe_click(page, '[data-act="ai-create"]', "AI review panel still open when creating tasks"); page.wait_for_timeout(900)
     made = DB["tasks"][before:]
     check("reviewed action items became tasks, with no invented deadlines", len(made) == 2 and all(t["due_at"] is None and t["follow_up_at"] is None for t in made), str(made))
     check("new tasks linked back to the meeting", sum(1 for l in DB["record_links"] if l["from_type"] == "note" and l["from_id"] == (mtg or {}).get("id") and l["to_type"] == "task") == 2)
@@ -752,8 +758,15 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles")
     check("Command Centre shows habits for today", "habits today" in page.inner_text("#view").lower())
     page.goto(BASE + "/#/goals/goals"); page.click('.page-head [data-act="goal-new"]'); page.wait_for_selector("#goalForm")
-    page.fill("#gl-title", "Lose 8 kg"); page.fill("#gl-target", "8"); page.fill("#gl-current", "2"); page.fill("#gl-unit", "kg"); page.click("#glSave"); page.wait_for_function("document.querySelector('#toast') && document.querySelector('#toast').innerText.includes('Goal saved')")
+    page.wait_for_timeout(400)
+    for _ in range(3):
+        page.fill("#gl-title", "Lose 8 kg"); page.fill("#gl-target", "8"); page.fill("#gl-current", "2"); page.fill("#gl-unit", "kg")
+        if page.input_value("#gl-current") == "2" and page.input_value("#gl-target") == "8": break
+        page.wait_for_timeout(300)
+    page.click("#glSave"); page.wait_for_function("document.querySelector('#toast') && document.querySelector('#toast').innerText.includes('Goal saved')")
     page.keyboard.press("Escape"); page.wait_for_selector(".goal-card")
+    try: page.wait_for_function("[...document.querySelectorAll('.goal-card')].some(c => c.innerText.includes('Lose 8 kg') && c.innerText.includes('25%'))", timeout=8000)
+    except Exception: pass
     gc = page.locator(".goal-card", has_text="Lose 8 kg").first.inner_text()
     check("goal progress computed from target and current (25%)", "25%" in gc, gc[:120])
     page.goto(BASE + "/#/goals/health"); page.click('.page-head [data-act="health-new"]'); page.wait_for_selector("#healthForm")
@@ -906,9 +919,9 @@ with sync_playwright() as pw:
     page.goto(BASE + "/#/notes/meetings"); page.wait_for_selector(".note-row"); page.click(".note-row"); page.wait_for_selector("#nfAi")
     calls = len(AI_CALLS); page.click("#nfAi"); page.wait_for_selector(".actions-review")
     check("AI action items arrive as suggestions for review (nothing created yet)", "Suggested by AI" in page.inner_text(".actions-review") and page.locator(".actions-review li").count() == 2 and len(AI_CALLS) == calls + 1)
-    check("AI owner name matched to the workspace member", page.input_value("#ai-owner-0") == ADIL)
+    check("AI owner name matched to the workspace member", owner_val(page) == ADIL)
     page.fill("#ai-title-0", "Confirm inspection slot with surveyor (Sun)"); page.uncheck('[data-act="ai-toggle"][data-i="1"]')
-    page.click('[data-act="ai-create"]'); page.wait_for_timeout(900)
+    safe_click(page, '[data-act="ai-create"]', "AI review panel still open when creating tasks"); page.wait_for_timeout(900)
     ai_items = [v for v in AI_PROPOSALS.values() if v["action"] == "action_items"]
     check("AI log: edited and partly skipped action items recorded as 'edited'", ai_items and ai_items[-1]["decisions"] == ["edited"] and (ai_items[-1]["context"] or {}).get("type") == "note", str(ai_items[-1:]))
     page.keyboard.press("Escape")

@@ -1,0 +1,1 @@
+select 'partner gone: ' || (to_regclass('public.fin_partner_txns') is null)::text, 'reverse restored: ' || (position('partner' in pg_get_functiondef('public.fin_reverse_journal(uuid,text,date)'::regprocedure)) = 0)::text;

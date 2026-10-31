@@ -60,3 +60,6 @@ create function public.dispatch_push() returns trigger language plpgsql security
 create trigger notifications_push after insert on public.notifications for each row execute function public.dispatch_push();
 -- match production: the app role reads activity but never writes it directly (only system functions do)
 revoke insert, update, delete on public.activity from authenticated;
+-- match Supabase: pgcrypto lives in the extensions schema
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
