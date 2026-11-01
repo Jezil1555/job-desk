@@ -1,11 +1,11 @@
-// J Desk service worker: offline app shell + phone push notifications.
-const CACHE = "jdesk-v19";
+// J. Desk service worker: offline app shell + phone push notifications.
+const CACHE = "jdesk-v20";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/config.js", "/manifest.webmanifest",
   "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/smart.js", "/js/assist.js", "/js/partners.js", "/js/xlsx.js", "/js/api.js", "/js/store.js", "/js/ui.js",
   "/js/sheets/task.js", "/js/sheets/capture.js", "/js/sheets/forms.js", "/js/sheets/knowledge.js", "/js/sheets/finforms.js", "/js/sheets/partnerforms.js", "/js/sheets/assist.js",
   "/js/views/home.js", "/js/views/tasks.js", "/js/views/workspaces.js", "/js/views/other.js", "/js/views/notes.js", "/js/views/goals.js", "/js/views/reports.js", "/js/views/finance.js", "/js/views/partners.js", "/js/views/intercompany.js", "/js/views/production.js", "/js/views/fx.js", "/js/views/setup.js", "/js/views/integrations.js",
-  "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
+  "/icons/icon-192.png", "/icons/logo.svg", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon-32.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
 ];
 
@@ -33,8 +33,8 @@ self.addEventListener("fetch", e => {
 
 self.addEventListener("push", e => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "J Desk", body: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.title || "J Desk", {
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "J. Desk", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "J. Desk", {
     body: d.body || "",
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",

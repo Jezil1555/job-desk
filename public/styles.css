@@ -12,7 +12,7 @@
   --faint: #948e88;
   --line: #e5e2dd;
   --line-2: #d7d3cd;
-  --accent: #b4470f;
+  --accent: #c2410c;
   --accent-ink: #ffffff;
   --accent-soft: #fbeadf;
   --side: #1c1c1e;
@@ -33,6 +33,7 @@
   --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
   --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --brand-dot: #c2410c; --wm-font: "Sora", "IBM Plex Sans", system-ui, sans-serif;
   --side-w: 272px; --bn-h: 60px;
   color-scheme: light;
 }
@@ -74,8 +75,9 @@ kbd { font: 500 .7rem var(--mono); padding: 1px 5px; border: 1px solid var(--lin
 .auth { min-height: 100dvh; display: grid; place-items: center; background: var(--side); padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .auth-card { width: 100%; max-width: 380px; background: var(--surface); border-radius: 16px; padding: 28px 24px; display: grid; gap: 16px; box-shadow: var(--shadow-lg); }
 .auth-card .brand { display: flex; gap: 12px; align-items: center; }
-.auth-card .brand img { border-radius: 11px; }
-.auth-card h1 { font: 600 1.6rem/1.1 var(--display); margin: 0; }
+.auth-card .brand img { border-radius: 11px; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1); }
+.auth-card h1 { font-size: 1.75rem; line-height: 1.1; margin: 0; }
+.auth-title { margin: 4px 0 0; font-size: 1.05rem; font-weight: 600; }
 .auth-card p { margin: 2px 0 0; color: var(--muted); }
 .auth-switch { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .formmsg { font-size: .87rem; padding: 9px 12px; border-radius: 8px; }
@@ -147,7 +149,9 @@ input[type="date"].input, input[type="time"].input { min-width: 0; }
   .bottomnav { display: none; }
   .sidenav { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 0; height: 100dvh; overflow-y: auto; background: var(--side); color: var(--side-ink); padding: 18px 12px 24px; }
   .sidenav .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 12px; font-weight: 600; font-size: 1.02rem; color: #fff; }
-  .sidenav .brand img { border-radius: 7px; }
+  .sidenav .brand img { border-radius: 7px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
+  .sidenav .brand .wm { display: block; font-size: 1.2rem; color: #fff; line-height: 1.1; }
+  .sidenav .brand .byline { display: block; font-size: .72rem; font-weight: 500; color: var(--side-dim); letter-spacing: .02em; border: 0; padding: 0; margin: 2px 0 0; background: none; border-radius: 0; }
   .capture-btn { display: flex; align-items: center; gap: 8px; margin: 0 4px 10px; padding: 9px 12px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
   .capture-btn span { flex: 1; text-align: left; }
   .capture-btn kbd { background: rgba(255,255,255,.18); color: inherit; border-color: rgba(255,255,255,.25); }
@@ -158,7 +162,7 @@ input[type="date"].input, input[type="time"].input { min-width: 0; }
   .sidenav nav a.on svg { color: #fff; }
   .sidenav nav a span { flex: 1; }
   .sidenav nav a.soon { color: var(--side-dim); }
-  .sidenav small { font-size: .66rem; color: var(--side-dim); border: 1px solid #2c3746; border-radius: 4px; padding: 0 4px; }
+  .sidenav small { font-size: .66rem; color: var(--side-dim); border: 1px solid rgba(255, 255, 255, .14); border-radius: 4px; padding: 0 4px; }
   .sidenav .cnt { font: 600 .7rem var(--mono); background: rgba(255,255,255,.1); color: #fff; padding: 0 6px; border-radius: 9px; }
   .subnav { margin-top: 12px; display: grid; gap: 1px; }
   .subnav p { margin: 0 10px 4px; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--side-dim); font-weight: 600; }
@@ -690,3 +694,9 @@ input.num { text-align: right; font-variant-numeric: tabular-nums; }
 ul.plain.small li { font-size: .85rem; margin: 4px 0; }
 .ptn-ledger { font-size: .88rem; } .ptn-ledger th, .ptn-ledger td { padding-left: 8px; padding-right: 8px; } .ptn-ledger .pill { white-space: nowrap; }
 .alert .snz { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; } .alert .snz .chip { font-size: .72rem; padding: 2px 8px; }
+
+/* ---------- brand: J. Desk wordmark ---------- */
+.wm { font-family: var(--wm-font); font-weight: 700; letter-spacing: -.02em; white-space: nowrap; }
+.wm i { font-style: normal; color: var(--brand-dot); }
+.app-sign { margin-top: 24px; }
+.app-sign .wm { color: var(--ink); }
