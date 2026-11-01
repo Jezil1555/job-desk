@@ -607,7 +607,15 @@ with sync_playwright() as pw:
     # ---------- desktop ----------
     ctx, page = new_page(b, 1360, 900)
     page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles", timeout=10000)
-    check("desktop sidebar shows all 9 sections", page.locator(".sidenav nav a").count() == 9)
+    check("desktop sidebar shows the five main sections", [x.split("\n")[0].strip() for x in page.locator(".sidenav nav a").all_inner_texts()] == ["Home", "Tasks", "Projects", "Finance", "Personal"], str(page.locator(".sidenav nav a").all_inner_texts()))
+    check("settings and search sit at the foot of the sidebar", page.locator('.side-foot a[href="#/settings"]').count() == 1 and page.locator('.side-foot a[href="#/search"]').count() == 1)
+    page.goto(BASE + "/#/personal"); page.wait_for_selector("h1")
+    check("Personal page shows tasks, projects, money, notes and goals", all(x in page.inner_text("#view").lower() for x in ["personal", "projects", "money", "notes", "goals & habits"]), page.inner_text("#view")[:200])
+    page.goto(BASE + "/#/tasks/today"); page.wait_for_selector(".viewtabs")
+    check("Tasks shows the five main views", [x.split("\n")[0].strip() for x in page.locator(".viewtabs > a").all_inner_texts()] == ["Today", "Upcoming", "Overdue", "Waiting on someone", "Completed"], str(page.locator(".viewtabs > a").all_inner_texts()))
+    page.click(".moreviews summary")
+    check("other views, follow-ups and calendar are under More views", page.is_visible('.moreviews .menu a[href="#/followups"]') and page.is_visible('.moreviews .menu a[href="#/tasks/blocked"]'))
+    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles", timeout=10000)
     check("Command Centre shows real overdue count", page.inner_text(".tile.bad .tn").strip() == "1")
     check("attention list ranks overdue critical task first", "Follow up with supplier" in page.locator(".attn-row").first.inner_text())
     check("project health shows blocked (critical milestone overdue)", "Blocked" in page.inner_text(".ph-list"))
@@ -813,8 +821,8 @@ with sync_playwright() as pw:
     ob = [j for j in DB["fin_journals"] if j["source"] == "opening"]
     obl = [l for l in DB["fin_lines"] if ob and l["journal_id"] == ob[0]["id"]]
     check("opening entry posted: bank Dr 10,000 / opening equity Cr 10,000", ob and ob[0]["status"] == "posted" and sorted((float(l["debit"]), float(l["credit"])) for l in obl) == [(0, 10000), (10000, 0)], str(obl))
-    page.wait_for_selector(".tiles")
-    page.click('[data-act="fin-quick"][data-kind="expense"]'); page.wait_for_selector("#finQuick")
+    page.wait_for_selector(".tiles"); page.wait_for_timeout(600)
+    safe_click(page, '[data-act="fin-quick"][data-kind="expense"]', "quick expense button available after posting"); page.wait_for_selector("#finQuick")
     page.fill("#fq-amt", "800"); page.select_option("#fq-money", f"{FE1[:8]}-acc-1010"); page.select_option("#fq-cat", f"{FE1[:8]}-acc-6000"); page.fill("#fq-memo", "October shop rent")
     page.click('#finQuick [data-post="1"]'); page.wait_for_timeout(700)
     check("quick expense posts a 2-line entry", any(j["memo"] == "October shop rent" and j["status"] == "posted" for j in DB["fin_journals"]))

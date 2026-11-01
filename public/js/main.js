@@ -18,6 +18,7 @@ import { handleIcClick, handleIcChange, handleIcSubmit } from "./views/intercomp
 import { handleProdClick, handleProdSubmit } from "./views/production.js";
 import { handleFxClick, handleFxChange, handleFxSubmit } from "./views/fx.js";
 import { handleSetupClick, handleSetupChange, handleSetupSubmit } from "./views/setup.js";
+import { renderPersonal } from "./views/personal.js";
 import { handlePartnerClick, handlePartnerChange, handlePartnerInput, handlePartnerSubmit } from "./sheets/partnerforms.js";
 import { openDraft, handleAssistClick, handleAssistChange } from "./sheets/assist.js";
 import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integrations.js";
@@ -28,15 +29,11 @@ import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, run
 
 const cfg = window.JOBDESK_CONFIG;
 const NAV = [
-  { key: "home", label: "Command Centre", icon: "home", href: "#/home" },
-  { key: "tasks", label: "My Tasks", icon: "tasks", href: "#/tasks/today" },
-  { key: "workspaces", label: "Projects & Workspaces", icon: "folder", href: "#/workspaces" },
-  { key: "calendar", label: "Calendar & Follow-ups", icon: "calendar", href: "#/calendar" },
-  { key: "finance", label: "Finance & CFO", icon: "finance", href: "#/finance" },
-  { key: "goals", label: "Goals & Habits", icon: "goals", href: "#/goals" },
-  { key: "notes", label: "Notes & Documents", icon: "notes", href: "#/notes" },
-  { key: "reports", label: "Reports & Insights", icon: "reports", href: "#/reports" },
-  { key: "settings", label: "Settings", icon: "settings", href: "#/settings" }
+  { key: "home", label: "Home", icon: "home", href: "#/home" },
+  { key: "tasks", label: "Tasks", icon: "tasks", href: "#/tasks/today" },
+  { key: "workspaces", label: "Projects", icon: "folder", href: "#/workspaces" },
+  { key: "finance", label: "Finance", icon: "finance", href: "#/finance" },
+  { key: "personal", label: "Personal", icon: "user", href: "#/personal" }
 ];
 
 /* ---------- routing ---------- */
@@ -48,7 +45,7 @@ function parseRoute() {
   const r = { name: seg[0] || "home", a: seg[1], b: seg[2], c: seg[3], params };
   return r;
 }
-const navKey = r => ({ home: "home", tasks: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", calendar: "calendar", followups: "calendar", finance: "finance", goals: "goals", notes: "notes", reports: "reports", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
+const navKey = r => ({ home: "home", tasks: "tasks", calendar: "tasks", followups: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
 
 function render() {
   if (!state.user) return;
@@ -79,6 +76,7 @@ function render() {
       case "notes": renderNotes(view, r.a || "notes"); break;
       case "goals": renderGoals(view, r.a || "habits"); break;
       case "reports": renderReports(view, r.a || "daily"); break;
+      case "personal": renderPersonal(view); title = "Personal"; break;
       case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
       default: renderHome(view); title = "Command Centre";
     }
@@ -105,14 +103,13 @@ function renderNav() {
     <div class="brand"><img src="/icons/logo.svg" alt="" width="30" height="30"><div><span class="wm">J<i>.</i> Desk</span><small class="byline">by Jezil</small></div></div>
     <button class="capture-btn" data-act="capture">${ICON.plus}<span>Quick capture</span><kbd>N</kbd></button>
     <nav aria-label="Main">${NAV.map(n => `<a href="${n.href}" class="${k === n.key ? "on" : ""} ${n.soon ? "soon" : ""}">${ICON[n.icon]}<span>${n.label}</span>${n.soon ? `<small>${n.soon}</small>` : counts[n.key] ? `<b class="cnt">${counts[n.key]}</b>` : ""}</a>`).join("")}</nav>
-    ${k === "tasks" || saved.length ? `<div class="subnav"><p>Task views</p>
-      <a href="#/tasks/inbox">Inbox${counts.inbox ? `<b class="cnt">${counts.inbox}</b>` : ""}</a><a href="#/tasks/overdue">Overdue</a><a href="#/tasks/waiting">Waiting</a><a href="#/tasks/blocked">Blocked</a><a href="#/tasks/delegated">Delegated</a>
-      ${saved.map((s, i) => `<a href="#/tasks/${s.view}" data-act="apply-view" data-i="${i}">★ ${esc(s.name)}</a>`).join("")}</div>` : ""}
-    <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>`;
+    ${saved.length ? `<div class="subnav"><p>Saved views</p>${saved.map((s, i) => `<a href="#/tasks/${s.view}" data-act="apply-view" data-i="${i}">★ ${esc(s.name)}</a>`).join("")}</div>` : ""}
+    <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>
+    <div class="side-foot"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
   $("bottomnav").innerHTML = [
-    ["home", "#/home", "home", "Home"], ["tasks", "#/tasks/today", "tasks", "Tasks"], ["capture", null, "plus", "Capture"], ["calendar", "#/followups", "calendar", "Follow-ups"], ["more", null, "more", "More"]
+    ["home", "#/home", "home", "Home"], ["tasks", "#/tasks/today", "tasks", "Tasks"], ["capture", null, "plus", "Capture"], ["workspaces", "#/workspaces", "folder", "Projects"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
   ].map(([key, href, ic, label]) => key === "capture" ? `<button class="bn-capture" data-act="capture" aria-label="Quick capture">${ICON.plus}</button>` :
-    href ? `<a href="${href}" class="${k === key ? "on" : ""}">${ICON[ic]}<span>${label}</span>${counts[key] ? `<b class="cnt">${counts[key]}</b>` : ""}</a>` : `<button data-act="more-menu" class="${["workspaces", "finance", "goals", "notes", "reports", "settings"].includes(k) ? "on" : ""}">${ICON[ic]}<span>${label}</span></button>`).join("");
+    `<a href="${href}" class="${k === key ? "on" : ""}">${ICON[ic]}<span>${label}</span>${counts[key] ? `<b class="cnt">${counts[key]}</b>` : ""}</a>`).join("");
   const b = $("bellCount"); b.hidden = !unread; b.textContent = unread > 99 ? "99+" : unread;
   if ("setAppBadge" in navigator) { try { unread ? navigator.setAppBadge(unread) : navigator.clearAppBadge(); } catch (e) {} }
 }

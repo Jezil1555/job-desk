@@ -23,6 +23,9 @@ export function currentTaskList(view) {
   return sortTasks(list, state.ui.sort || state.prefs.task_sort || "smart");
 }
 
+const MAIN_VIEWS = ["today", "upcoming", "overdue", "waiting", "completed"];
+const MORE_VIEWS = ["inbox", "priority", "blocked", "delegated", "mine", "all"];
+const vcount = k => VIEWS[k] ? state.tasks.filter(viewFilter(k, state.user.id, state.tz)).filter(t => activeWorkspaces().some(w => w.id === t.workspace_id)).length : 0;
 export function renderTasks(view, viewKey) {
   const v = VIEWS[viewKey] ? viewKey : "mine";
   const mode = state.ui.mode || state.prefs.task_mode || "list";
@@ -40,7 +43,10 @@ export function renderTasks(view, viewKey) {
       <div class="segbtn" role="group" aria-label="Layout"><button class="${mode === "list" ? "on" : ""}" data-act="task-mode" data-m="list" aria-label="List">${ICON.list}</button><button class="${mode === "board" ? "on" : ""}" data-act="task-mode" data-m="board" aria-label="Board">${ICON.board}</button></div>
       <button class="btn sm ${state.ui.selecting ? "on" : ""}" data-act="bulk-toggle">${state.ui.selecting ? "Done selecting" : "Select"}</button>
     </div></div>
-  <div class="viewtabs">${["today", "inbox", "upcoming", "overdue", "priority", "waiting", "blocked", "delegated", "mine", "all", "completed"].map(k => `<a href="#/tasks/${k}" class="${k === v ? "on" : ""}">${VIEWS[k].label}<span class="c">${state.tasks.filter(viewFilter(k, state.user.id, state.tz)).filter(t => activeWorkspaces().some(w => w.id === t.workspace_id)).length}</span></a>`).join("")}
+  <div class="viewtabs">${MAIN_VIEWS.map(k => `<a href="#/tasks/${k}" class="${k === v ? "on" : ""}">${VIEWS[k].label}<span class="c">${vcount(k)}</span></a>`).join("")}
+    <details class="moreviews"><summary class="${MAIN_VIEWS.includes(v) ? "" : "on"}">${MAIN_VIEWS.includes(v) ? "More views" : esc(VIEWS[v].label)} ▾</summary><div class="menu">
+      ${MORE_VIEWS.map(k => `<a href="#/tasks/${k}" class="${k === v ? "on" : ""}">${VIEWS[k].label}<small>${vcount(k)}</small></a>`).join("")}
+      <hr><a href="#/followups">Follow-ups (waiting on people)</a><a href="#/calendar">Calendar</a><a href="#/reports">Reports</a></div></details>
     ${saved.map((s, i) => `<a href="#/tasks/${s.view}" data-act="apply-view" data-i="${i}" class="saved">★ ${esc(s.name)}</a>`).join("")}</div>
   <div class="filterbar">
     <div class="searchbar">${ICON.search}<input class="input sm" id="tl-search" placeholder="Filter these tasks…" value="${esc(state.ui.search || "")}" autocomplete="off"></div>
