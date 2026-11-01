@@ -5,6 +5,7 @@ import { isOpen, sortTasks } from "../logic.js";
 import { ICON, taskRow, section, emptyState } from "../ui.js";
 import { fin, loadFin, linesOf, accountsOf } from "../finapi.js";
 import { money, r2, natural, profitAndLoss } from "../finance.js";
+import { habitChecklist, activeHabits } from "./goals.js";
 
 export function renderPersonal(view) {
   const wss = activeWorkspaces().filter(w => w.kind === "personal");
@@ -33,5 +34,6 @@ export function renderPersonal(view) {
   ${section("Money", fin.loaded ? (books.length ? `<div class="plist">${books.map(moneyRow).join("")}</div><p class="hint">Your personal books only. Business money stays in each business's own books under Finance.</p>` : `<p class="calm">No personal books yet. <a href="#/finance">Set them up in Finance</a>.</p>`) : `<p class="hint">Loading…</p>`)}
   ${section("Notes", `${notes.length ? `<div class="plist">${notes.map(n => `<a href="#/n/${n.id}"><span class="grow">${esc(n.title)}</span><small>${esc((n.updated_at || "").slice(0, 10))}</small></a>`).join("")}</div>` : `<p class="calm">No personal notes yet.</p>`}
     <p><a href="#/notes">All notes & documents</a></p>`, { count: notes.length })}
+  ${activeHabits().length && habitChecklist() ? section("Habits today", habitChecklist() + `<a class="more" href="#/goals/habits">Week view</a>`, { cls: "habits-sect" }) : ""}
   ${section("Goals & habits", `<div class="plist"><a href="#/goals/goals"><span class="grow">Goals</span><small>${goals.length} active</small></a><a href="#/goals/habits"><span class="grow">Habits</span><small>${habits.length} tracked</small></a><a href="#/goals/health"><span class="grow">Health log</span><small>private</small></a></div>`)}`;
 }

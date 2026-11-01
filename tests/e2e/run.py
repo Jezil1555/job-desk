@@ -606,7 +606,7 @@ with sync_playwright() as pw:
 
     # ---------- desktop ----------
     ctx, page = new_page(b, 1360, 900)
-    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles", timeout=10000)
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap", timeout=10000)
     check("desktop sidebar shows the five main sections", [x.split("\n")[0].strip() for x in page.locator(".sidenav nav a").all_inner_texts()] == ["Home", "Tasks", "Projects", "Finance", "Personal"], str(page.locator(".sidenav nav a").all_inner_texts()))
     check("settings and search sit at the foot of the sidebar", page.locator('.side-foot a[href="#/settings"]').count() == 1 and page.locator('.side-foot a[href="#/search"]').count() == 1)
     page.goto(BASE + "/#/personal"); page.wait_for_selector("h1")
@@ -615,10 +615,16 @@ with sync_playwright() as pw:
     check("Tasks shows the five main views", [x.split("\n")[0].strip() for x in page.locator(".viewtabs > a").all_inner_texts()] == ["Today", "Upcoming", "Overdue", "Waiting on someone", "Completed"], str(page.locator(".viewtabs > a").all_inner_texts()))
     page.click(".moreviews summary")
     check("other views, follow-ups and calendar are under More views", page.is_visible('.moreviews .menu a[href="#/followups"]') and page.is_visible('.moreviews .menu a[href="#/tasks/blocked"]'))
-    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles", timeout=10000)
-    check("Command Centre shows real overdue count", page.inner_text(".tile.bad .tn").strip() == "1")
-    check("attention list ranks overdue critical task first", "Follow up with supplier" in page.locator(".attn-row").first.inner_text())
-    check("project health shows blocked (critical milestone overdue)", "Blocked" in page.inner_text(".ph-list"))
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap", timeout=10000)
+    check("Home shows the real overdue count in the header", "1 overdue" in page.inner_text(".page-head"))
+    check("Today lists the overdue critical task first", "Follow up with supplier" in page.locator(".hlist .hrow").first.inner_text())
+    check("Home has no tiles, attention list or activity feed", page.locator(".tiles").count() == 0 and page.locator(".attn-row").count() == 0 and page.locator(".feed").count() == 0)
+    check("active projects list shows progress from completed tasks", "Kite BOM delivery" in page.inner_text(".plist") and "%" in page.inner_text(".plist"))
+    qb = page.locator('.hlist [data-act="home-quick"][data-f="fu"]').first; qid = qb.get_attribute("data-id")
+    qb.click(); page.wait_for_timeout(600)
+    qt = next((t for t in DB["tasks"] if t["id"] == qid), {})
+    tomorrow = (dt.date.fromisoformat(today_qa()) + dt.timedelta(days=1)).isoformat()
+    check("Home 'Follow up tomorrow' sets 09:00 Doha tomorrow", (qt.get("follow_up_at") or "").startswith(tomorrow + "T06:00"), str(qt.get("follow_up_at")))
     shot(page, "01-home-desktop", True)
 
     # Quick capture without a deadline
@@ -630,12 +636,21 @@ with sync_playwright() as pw:
     check("captured task has no invented deadline or follow-up", created and created[0]["due_at"] is None and created[0]["follow_up_at"] is None)
     check("captured task defaults: inbox, medium, owner = me", created and created[0]["status"] == "inbox" and created[0]["priority"] == "medium" and created[0]["owner_id"] == ME)
     page.click("text=Capture another"); page.fill("#cap-title", "Renew trade licence")
-    page.check('input[value="not_started"]', force=True)
     page.click('[data-act="cap-more"]'); page.click('[data-act="cap-quick"][data-f="due"][data-n="7"]')
     page.select_option("#cap-priority", "high"); page.click("#capSave"); page.wait_for_selector("text=Capture another")
     t2 = next((t for t in DB["tasks"] if t["title"] == "Renew trade licence"), None)
     check("capture with deadline stores a UTC timestamp at 23:59 Doha", t2 and t2["due_at"] and t2["due_at"].endswith("T20:59:00.000Z"), str(t2 and t2["due_at"]))
-    check("capture as 'Ready to work' sets Not started + High", t2 and t2["status"] == "not_started" and t2["priority"] == "high")
+    check("a task with a due date goes straight to Not started (not Inbox), High", t2 and t2["status"] == "not_started" and t2["priority"] == "high")
+    page.click("text=Capture another"); page.fill("#cap-title", "Pay Dlusso fabric supplier"); page.wait_for_timeout(150)
+    check("plain words pick the workspace (Dlusso) without a #tag", "D'Lusso" in page.inner_text("#cap-chips") and page.input_value("#cap-ws") == WS[0], page.inner_text("#cap-chips"))
+    page.click("#capSave"); page.wait_for_selector("text=Capture another")
+    t3 = next((t for t in DB["tasks"] if t["title"] == "Pay Dlusso fabric supplier"), {})
+    check("task saved in the guessed workspace, title unchanged", t3.get("workspace_id") == WS[0])
+    page.click("text=Capture another"); page.fill("#cap-title", "Note: Al Muthawa prefers WhatsApp for dispatch updates"); page.wait_for_timeout(250)
+    check("a 'Note:' line is suggested as a note", page.is_checked('input[name="cap-kind"][value="note"]') and page.locator("#cap-due-d").count() == 0)
+    page.click("#capSave"); page.wait_for_selector("text=Capture another")
+    nt = next((n for n in DB["notes"] if "prefers WhatsApp" in (n.get("body") or "")), {})
+    check("note saved as a note (not a task), prefix removed from the title", nt.get("kind") == "note" and nt.get("title", "").startswith("Al Muthawa prefers") and not any("prefers WhatsApp" in t["title"] for t in DB["tasks"]))
     page.click('[data-act="close-sheet"] >> nth=0')
 
     # Completion rules
@@ -763,8 +778,9 @@ with sync_playwright() as pw:
     check("unticking removes the check-in", len(DB["habit_logs"]) == 0)
     check("future days cannot be ticked", page.locator(".hcell:disabled").count() == page.evaluate("6 - new Date(new Date().toLocaleString('en-US', {timeZone: 'Asia/Qatar'})).getDay()"))
     shot(page, "11-habits")
-    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles")
-    check("Command Centre shows habits for today", "habits today" in page.inner_text("#view").lower())
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap")
+    page.goto(BASE + "/#/personal"); page.wait_for_selector("h1")
+    check("habits for today live on the Personal page", "habits today" in page.inner_text("#view").lower())
     page.goto(BASE + "/#/goals/goals"); page.click('.page-head [data-act="goal-new"]'); page.wait_for_selector("#goalForm")
     page.wait_for_timeout(400)
     for _ in range(3):
@@ -888,8 +904,7 @@ with sync_playwright() as pw:
     shot(page, "16-finance-overview", True)
 
     # ---------- Phase 4: smart capture, briefing, drafts, calendar link, AI (simulated) ----------
-    page.goto(BASE + "/#/home"); page.wait_for_selector(".briefing")
-    check("Command Centre opens with a briefing from stored records", "overdue" in page.inner_text(".briefing") or "Nothing overdue" in page.inner_text(".briefing"), page.inner_text(".briefing"))
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap")
     page.keyboard.press("n"); page.wait_for_selector("#capForm")
     page.fill("#cap-title", "Chase Al Muthawa dispatch fri 10am #dlusso !high"); page.wait_for_timeout(150)
     chips = page.inner_text("#cap-chips")
@@ -948,10 +963,10 @@ with sync_playwright() as pw:
 
     # Settings: hide a dashboard section persists to profile prefs
     page.goto(BASE + "/#/settings"); page.wait_for_selector(".settings")
-    page.uncheck('[data-act="toggle-section"][data-k="activity"]'); page.wait_for_timeout(300)
-    check("dashboard customisation saved to profile", "activity" in (next(p for p in DB["profiles"] if p["id"] == ME)["prefs"].get("dashboard_hidden") or []))
-    page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles")
-    check("hidden section no longer shown", "Recent activity" not in page.inner_text("#view"))
+    page.uncheck('[data-act="toggle-section"][data-k="projects"]'); page.wait_for_timeout(300)
+    check("dashboard customisation saved to profile", "projects" in (next(p for p in DB["profiles"] if p["id"] == ME)["prefs"].get("dashboard_hidden") or []))
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap")
+    check("hidden section no longer shown", "active projects" not in page.inner_text("#view").lower())
     ctx.close()
 
 
@@ -1075,12 +1090,12 @@ with sync_playwright() as pw:
     page.click('[data-act="review-request"]'); page.wait_for_selector(".dlg"); page.fill("#dlgIn", "All 6 docs attached"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(500)
     check("review requested and shown as waiting for the reviewer", rv.get("review_status") == "requested" and "Waiting for" in page.inner_text("#sheet"), page.inner_text("#toast"))
     rv.update(assignee_id=ADIL, reviewer_id=ME, review_status="requested")
-    page.keyboard.press("Escape"); page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector(".tiles"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]')
+    page.keyboard.press("Escape"); page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector("#homeCap"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]')
     page.click('[data-act="review-changes"]'); page.wait_for_selector(".dlg"); page.click('.dlg [data-r="1"]')
     check("asking for changes needs a note", page.is_visible("#dlgErr"))
     page.fill("#dlgIn", "COO certificate missing"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(500)
     check("changes requested sends the task back", rv.get("review_status") == "changes_requested" and rv.get("status") == "in_progress")
-    rv["review_status"] = "requested"; page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector(".tiles"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]'); page.click('[data-act="review-approve"]'); page.wait_for_timeout(500)
+    rv["review_status"] = "requested"; page.goto(BASE + "/#/home"); page.reload(); page.wait_for_selector("#homeCap"); page.goto(BASE + "/#/t/t-review"); page.wait_for_selector('[data-act="review-approve"]'); page.click('[data-act="review-approve"]'); page.wait_for_timeout(500)
     check("reviewer approval completes the task", rv.get("status") == "completed" and rv.get("review_status") == "approved")
     shot(page, "25-task-review")
     ctx.close()
@@ -1274,7 +1289,7 @@ with sync_playwright() as pw:
     # ---------- phone, light + dark ----------
     for scheme in ["light", "dark"]:
         ctx, page = new_page(b, 390, 844, scheme)
-        page.goto(BASE + "/#/home"); page.wait_for_selector(".tiles", timeout=10000)
+        page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap", timeout=10000)
         check(f"phone ({scheme}): bottom nav visible, sidebar hidden", page.is_visible("#bottomnav") and not page.is_visible("#sidenav"))
         overflow = page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1")
         check(f"phone ({scheme}): no horizontal scroll on home", not overflow)

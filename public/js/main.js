@@ -7,7 +7,7 @@ import { ICON, $, toast, toastError, closeSheet, closeAllSheets, sheetOpen, dial
 import { openTask, handleTaskChange, handleTaskInput, handleTaskClick, handleTaskSubmit, handleContactSelect, clearTaskSheet } from "./sheets/task.js";
 import { openCapture, handleCaptureChange, handleCaptureClick, handleCaptureSubmit, handleCaptureInput } from "./sheets/capture.js";
 import { openProjectForm, openMilestoneForm, openFollowUp, openWorkspaceForm, openContactForm, handleFormSubmit, handleFormClick, handleFormChange } from "./sheets/forms.js";
-import { renderHome } from "./views/home.js";
+import { renderHome, handleHomeClick, handleHomeSubmit } from "./views/home.js";
 import { renderNotes, handleNotesChange, handleNotesInput, NOTE_TABS } from "./views/notes.js";
 import { renderGoals, handleGoalsClick, handleGoalsChange, handleGoalsSubmit } from "./views/goals.js";
 import { renderReports, handleReportsClick, handleReportsChange, handleReportsSubmit, REPORT_TABS } from "./views/reports.js";
@@ -78,7 +78,7 @@ function render() {
       case "reports": renderReports(view, r.a || "daily"); break;
       case "personal": renderPersonal(view); title = "Personal"; break;
       case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
-      default: renderHome(view); title = "Command Centre";
+      default: renderHome(view); title = "Home";
     }
   } catch (e) {
     console.error(e);
@@ -142,6 +142,7 @@ document.addEventListener("click", async e => {
   if (await handleProdClick(act, el)) return;
   if (await handleFxClick(act, el)) return;
   if (await handleSetupClick(act, el)) return;
+  if (await handleHomeClick(act, el)) return;
   if (await handlePartnerClick(act, el, rerender)) return;
   if (await handleFinClick(act, el, rerender)) return;
   if (await handleAssistClick(act, el)) return;
@@ -236,6 +237,7 @@ document.addEventListener("submit", async e => {
   if (await handleProdSubmit(form)) return;
   if (await handleFxSubmit(form)) return;
   if (await handleSetupSubmit(form)) return;
+  if (handleHomeSubmit(form)) return;
   if (await handlePartnerSubmit(form)) return;
   if (await handleFinSubmit(form, rerender, e.submitter)) return;
 });

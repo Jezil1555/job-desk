@@ -135,3 +135,48 @@ export function snoozeUntil(when, tz, nowMs = Date.now()) {
   const dow = new Date(today + "T12:00:00Z").getUTCDay(), ahead = ((1 - dow + 7) % 7) || 7; // next Monday
   return zonedToISO(addDays(today, ahead), "09:00", tz);
 }
+
+/* ---------- plain-language capture: which workspace/project, task or note ---------- */
+const WS_STOP = new Set(["the", "and", "new", "entity", "india", "hub", "llc", "qfz", "group", "company", "trading", "technology", "mediate", "thrissur", "kakkanad"]);
+const PROJ_STOP = new Set(["project", "delivery", "phase", "order", "orders", "payment", "review", "setup", "plan", "general", "misc"]);
+const words = s => String(s || "").toLowerCase().normalize("NFKD").replace(/['’]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+/**
+ * Guess the workspace (and project) from plain words — workspace names, project names, and contacts saved in a workspace.
+ * Returns { workspace_id, project_id, why } or {} when nothing matches or two workspaces match (never guesses between them).
+ */
+export function guessContext(text, { workspaces = [], projects = [], contacts = [] } = {}) {
+  const tw = new Set(words(text)), joined = " " + words(text).join(" ") + " ";
+  const hits = []; // {ws, project?, why, rank}
+  for (const w of workspaces) {
+    const keys = words(w.name).filter(k => k.length >= 4 && !WS_STOP.has(k));
+    const k = keys.find(x => tw.has(x)) || (joined.includes(" " + words(w.name).join(" ") + " ") ? w.name : null);
+    if (k) hits.push({ ws: w.id, why: w.name, rank: 1 });
+  }
+  for (const p of projects) {
+    const pw = words(p.name), full = " " + pw.join(" ") + " ";
+    const lead = pw[0] && pw[0].length >= 4 && !PROJ_STOP.has(pw[0]) && tw.has(pw[0]);
+    if (pw.length && (joined.includes(full) || lead)) hits.push({ ws: p.workspace_id, project: p.id, why: p.name, rank: 2 });
+  }
+  for (const c of contacts) {
+    for (const nm of [c.name, c.organisation]) {
+      const cw = words(nm); if (!cw.length) continue;
+      const full = " " + cw.join(" ") + " ";
+      if ((cw.join("").length >= 4 && joined.includes(full)) || (cw[0].length >= 5 && tw.has(cw[0]))) { hits.push({ ws: c.workspace_id, why: nm, rank: 3 }); break; }
+    }
+  }
+  const wsSet = new Set(hits.map(h => h.ws));
+  if (wsSet.size !== 1) return {};
+  hits.sort((a, b) => a.rank - b.rank);
+  const proj = hits.filter(h => h.project);
+  return { workspace_id: hits[0].ws, project_id: proj.length === 1 ? proj[0].project : null, why: hits[0].why, project_why: proj.length === 1 ? proj[0].why : null };
+}
+const TASK_VERBS = /^(follow|chase|call|email|mail|send|pay|check|book|buy|order|prepare|review|confirm|ask|arrange|renew|submit|collect|meet|visit|finish|fix|update|schedule|remind|get|make|plan|draft|sign|file|apply|transfer|deposit|reply|share|print|clear|ship|track|request|approve|cancel|register|clean|complete|organise|organize|set)\b/i;
+/** Task or note? A line starting "note:", "idea:", "fyi" — or a long paragraph with no action verb — reads as a note. */
+export function guessKind(text) {
+  const t = String(text || "").trim();
+  if (!t) return "task";
+  if (/^(note|notes|idea|fyi|info|minutes|thought|remember that)\b\s*[:\-–]?/i.test(t)) return "note";
+  if (TASK_VERBS.test(t)) return "task";
+  if (t.length > 140 || t.split("\n").length > 2) return "note";
+  return "task";
+}

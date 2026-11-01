@@ -86,3 +86,22 @@ test("snooze times are computed in the person's time zone", async () => {
   assert.equal(snoozeUntil("monday", "Asia/Qatar", now), "2026-11-02T06:00:00.000Z");   // Mon 09:00 Doha
   assert.equal(snoozeUntil("monday", "Asia/Qatar", Date.parse("2026-11-02T03:00:00Z")), "2026-11-09T06:00:00.000Z"); // on a Monday → next Monday
 });
+
+import { guessContext, guessKind } from "../../public/js/smart.js";
+test("plain words pick the workspace, project or contact — never guessing between two", () => {
+  const ctx = { workspaces: [{ id: "q", name: "QCLOUD" }, { id: "d", name: "D'Lusso & Mediate" }, { id: "f", name: "Fitness Hub" }, { id: "b", name: "The Burgery Thrissur" }, { id: "p", name: "Personal & Family" }],
+    projects: [{ id: "k", workspace_id: "q", name: "Kite BOM delivery" }], contacts: [{ workspace_id: "q", name: "Rahul", organisation: "Anixter" }] };
+  assert.equal(guessContext("Pay Dlusso fabric supplier", ctx).workspace_id, "d");
+  assert.equal(guessContext("Check Fitness Hub partner contribution", ctx).workspace_id, "f");
+  assert.equal(guessContext("Book family appointment", ctx).workspace_id, "p");
+  assert.equal(guessContext("Follow up with Anixter about the Belgium shipment", ctx).workspace_id, "q");
+  assert.deepEqual([guessContext("Kite BOM: confirm racks", ctx).workspace_id, guessContext("Kite BOM: confirm racks", ctx).project_id], ["q", "k"]);
+  assert.deepEqual(guessContext("Burgery and Dlusso review", ctx), {});
+  assert.deepEqual(guessContext("Buy milk", ctx), {});
+});
+test("task or note", () => {
+  assert.equal(guessKind("Follow up with Anixter"), "task");
+  assert.equal(guessKind("Note: supplier prefers WhatsApp"), "note");
+  assert.equal(guessKind("Idea - loyalty card for the gym"), "note");
+  assert.equal(guessKind("Renew trade licence"), "task");
+});
