@@ -127,5 +127,5 @@ fixed in a follow-up migration and the local copy corrected so it can't recur.
 - Database: all migrations in `supabase/migrations` applied to project `lvusersarnzzamdgvxgm`.
 - Edge functions: `send-push`, `calendar-feed` (v2, renamed), `assistant`, `gcal-sync`. The repo's `gcal-sync` has the new name in two
   display strings; it's redeployed together with the Google OAuth setup (the function is inactive until then).
-- Branding (31 Oct): app renamed Jezz HQ, graphite & burnt-orange theme, JZ monogram icons. Calendar event IDs kept as `@job-desk`
+- Branding (31 Oct): app renamed J Desk, graphite & burnt-orange theme, JZ monogram icons. Calendar event IDs kept as `@job-desk`
   so existing subscriptions don't duplicate events. The site address is unchanged.
