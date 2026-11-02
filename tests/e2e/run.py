@@ -40,7 +40,8 @@ def fin_fixture():
     return {"fin_entities": ents, "fin_members": [{"entity_id": e["id"], "user_id": ME, "role": "owner"} for e in ents], "fin_accounts": seed_accounts(FE1) + seed_accounts(FE2),
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
             "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": [],
-            "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": [], "fin_fx_revaluations": []}
+            "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": [], "fin_fx_revaluations": [],
+            "fin_obligations": [], "fin_imports": [], "fin_import_rows": [], "fin_balance_checks": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -149,6 +150,7 @@ def handle(route):
         if a == "action_items": return reply({"items": [{"title": "Confirm inspection slot with surveyor", "owner": "Adil"}, {"title": "Share revised PO", "owner": None}], "proposal_id": pid})
         if a == "draft_message": return reply({"text": "Hi Rashid, AI-polished: please confirm the dispatch date today.", "proposal_id": pid})
         if a == "weekly_narrative": return reply({"text": "This week I closed out the Kite BOM material readiness.", "proposal_id": pid})
+        if a == "extract_money": return reply({"transactions": [{"txn_date": "2026-11-02", "date_found": True, "amount": 64.5, "direction": "out", "currency": "QAR", "description": "Topaz Fabrics", "merchant": "Topaz Fabrics", "kind": "paid_for_business", "category_account_id": None, "for_entity_id": None, "confidence": "medium", "note": None}], "proposal_id": pid})
         if a == "categorize": return reply({"suggestions": [{"id": l["id"], "account_id": next(x["id"] for x in inp["accounts"] if x["code"] == "6900"), "confidence": "medium"} for l in inp["lines"]], "proposal_id": pid})
         return reply({"error": "Unknown action."}, 400)
     if path.startswith("/rest/v1/rpc/"):
@@ -484,7 +486,55 @@ def prod_rpc(fn, b):
     if fn == "fin_goods_receipt_reverse":
         g = next(x for x in DB["fin_goods_receipts"] if x["id"] == b["p_receipt"]); g.update(status="reversed", reversal_reason=b["p_reason"]); return None
     raise FinError("not implemented: " + fn)
+def acc_of(aid): return next((a for a in DB["fin_accounts"] if a["id"] == aid), None)
+def bal_of(aid, party=None):
+    js = {j["id"] for j in DB["fin_journals"] if j["status"] == "posted"}
+    return round(sum(float(l["debit"]) - float(l["credit"]) for l in DB["fin_lines"] if l["journal_id"] in js and l["account_id"] == aid and (party is None or l.get("party_id") == party)), 2)
+def money_rpc(fn, b):
+    """Test stand-in for fin_money_post / fin_import_add (the real rules are tested in supabase/tests/inc11_simple_money_tests.sql)."""
+    if fn == "fin_import_add":
+        iid = str(uuid.uuid4()); DB["fin_imports"].insert(0, {"id": iid, "entity_id": b["p_entity"], "source": b["p_source"], "title": b["p_title"], "account_id": b["p_account"], "reader": b["p_reader"], "created_by": ME, "created_at": iso(dt.datetime.now(dt.timezone.utc))})
+        for i, r in enumerate(b["p_rows"], 1):
+            if not r.get("amount"): continue
+            acc = r.get("account_id") or b["p_account"]; key = f'{acc}|{r.get("txn_date")}|{float(r["amount"]):.2f}|{r["direction"]}|{re.sub("[^a-z0-9]", "", (r.get("description") or "").lower())}'
+            dup = "imported" if any(x["dedupe_key"] == key and x["import_id"] != iid for x in DB["fin_import_rows"]) else None
+            DB["fin_import_rows"].append({"id": str(uuid.uuid4()), "import_id": iid, "entity_id": b["p_entity"], "row_no": i, "txn_date": r.get("txn_date"), "amount": round(float(r["amount"]), 2), "direction": r["direction"],
+                "currency": r.get("currency") or "QAR", "description": r.get("description") or "Transaction", "merchant": r.get("merchant"), "account_id": acc, "kind": r.get("kind"), "category_account_id": r.get("category_account_id"),
+                "party_id": r.get("party_id"), "for_entity_id": r.get("for_entity_id"), "business_account_id": r.get("business_account_id"), "interest": r.get("interest"), "confidence": r.get("confidence") or "low",
+                "review_reason": r.get("review_reason"), "dedupe_key": key, "duplicate": dup, "duplicate_line_id": None, "status": "pending", "journal_id": None, "partner_txn_id": None, "raw": r.get("raw"),
+                "created_at": iso(now), "posted_at": None, "posted_by": None})
+        return iid
+    p = b["p"]; eid = p["entity_id"]; kind = p["kind"]; amt = round(float(p["amount"]), 2); m = acc_of(p["account_id"]); c = acc_of(p.get("category_account_id")) if p.get("category_account_id") else None
+    if not m or m["subtype"] not in ("cash", "bank", "card"): raise FinError("bad_account: choose the bank, cash or card account the money moved through")
+    desc = p.get("description") or p.get("merchant") or ""
+    if not desc: raise FinError("description_required: say what it was for")
+    row = next((r for r in DB["fin_import_rows"] if r["id"] == p.get("import_row_id")), None) if p.get("import_row_id") else None
+    if row and row["status"] != "pending": raise FinError("already_posted: this imported line was already posted or skipped")
+    ptx = None
+    if kind in ("paid_for_business", "business_repaid"):
+        k = next((x for x in DB["fin_partner_links"] if x["entity_id"] == p.get("for_entity_id") and x["mirror_entity_id"] == eid), None)
+        if not k: raise FinError("no_link: these books aren't linked to that business yet")
+        if not p.get("business_account_id"): raise FinError("business_account_required: say what it was for in the business's books")
+        ptx = partner_rpc("fin_partner_record", {"p": {"link_id": k["id"], "txn_type": "expense_funding" if kind == "paid_for_business" else "reimbursement", "txn_date": p["txn_date"], "description": desc,
+            "beneficiary": p.get("merchant"), "amount": amt, "account_id": p["business_account_id"], "mirror_account_id": m["id"], "paid_from": "personal_bank"}})
+        jid = next(t for t in DB["fin_partner_txns"] if t["id"] == ptx)["mirror_journal_id"]
+    else:
+        if not c: raise FinError("category_required: choose what it was for")
+        pty = p.get("party_id"); intr = float(p.get("interest") or 0)
+        if kind == "spend": ls = [{"account_id": c["id"], "party_id": pty, "debit": amt}, {"account_id": m["id"], "credit": amt}]
+        elif kind == "income": ls = [{"account_id": m["id"], "debit": amt}, {"account_id": c["id"], "party_id": pty, "credit": amt}]
+        elif kind == "transfer": ls = [{"account_id": c["id"], "debit": amt}, {"account_id": m["id"], "credit": amt}]
+        elif kind == "lent": ls = [{"account_id": c["id"], "party_id": pty, "debit": amt}, {"account_id": m["id"], "credit": amt}]
+        elif kind == "repayment_in":
+            if amt > bal_of(c["id"], pty): raise FinError(f"exceeds_outstanding: {amt} is more than the {bal_of(c['id'], pty)} they owe you")
+            ls = [{"account_id": m["id"], "debit": amt}, {"account_id": c["id"], "party_id": pty, "credit": amt}]
+        elif kind == "borrowed": ls = [{"account_id": m["id"], "debit": amt}, {"account_id": c["id"], "party_id": pty, "credit": amt}]
+        else: ls = [{"account_id": c["id"], "party_id": pty, "debit": round(amt - intr, 2)}, {"account_id": m["id"], "credit": amt}] + ([{"account_id": next(a["id"] for a in DB["fin_accounts"] if a["entity_id"] == eid and a["type"] == "expense"), "debit": intr}] if intr else [])
+        jid = sys_journal(eid, p["txn_date"], desc, "manual", None, ls)
+    if row: row.update(status="posted", journal_id=jid, partner_txn_id=ptx, kind=kind, posted_at=iso(dt.datetime.now(dt.timezone.utc)), posted_by=ME)
+    return {"journal_id": jid, "partner_txn_id": ptx}
 def fin_rpc(fn, b):
+    if fn in ("fin_money_post", "fin_import_add"): return money_rpc(fn, b)
     if fn.startswith("fin_production_") or fn.startswith("fin_goods_receipt"): return prod_rpc(fn, b)
     if fn.startswith("fin_ic_"): return ic_rpc(fn, b)
     if fn.startswith("fin_partner_"): return partner_rpc(fn, b)
@@ -1054,6 +1104,83 @@ with sync_playwright() as pw:
         check("all five reports export to one workbook", len(wb2.sheetnames) >= 6 and any("ageing" in n.lower() for n in wb2.sheetnames), str(wb2.sheetnames))
     except Exception as ex_: check("all five reports export to one workbook", False, str(ex_))
     shot(page, "23-partner-statement", True)
+    ctx.close()
+
+    # ---------- Simple personal money screens ----------
+    ctx, page = new_page(b, 1366, 900, scheme="dark")
+    page.goto(BASE + f"/#/finance/{FE3}/overview"); page.reload(); page.wait_for_selector(".mn-cards")
+    check("light theme by default, even on a dark device", page.evaluate("document.documentElement.dataset.theme") == "light")
+    cards = page.inner_text(".mn-cards")
+    check("overview: four clickable cards — owed to me, I owe, cash & bank, net position", all(x in cards for x in ["OWED TO ME", "I OWE", "CASH & BANK", "NET POSITION"]) or all(x.lower() in cards.lower() for x in ["owed to me", "i owe", "cash & bank", "net position"]), cards[:200])
+    check("owed to me shows the business balance from the partner ledger (500.00, Dlusso)", "500.00" in cards and "Dlusso" in cards, cards[:300])
+    check("old accounting tabs are not on the main tab bar", "Customers & suppliers" not in page.inner_text(".mn-tabs") and "Advanced" in page.inner_text(".mn-tabs"))
+    shot(page, "30-money-overview", True)
+    page.click('.mn-card[href$="/owed"]'); page.wait_for_selector(".mn-group")
+    page.click(".mn-group"); page.wait_for_selector(".mn-items")
+    it = page.inner_text("#sheet")
+    check("owed drill-down: item by item with paid back and outstanding", "Item by item" in it and "Outstanding" in it and "500.00" in it, it[:300])
+    shot(page, "31-money-owed-dlusso")
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+    # capture: paste SMS
+    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts")
+    page.click('[data-act="mn-paste"]'); page.wait_for_selector("#mn-text")
+    page.fill("#mn-text", "Your account XXXX1234 has been debited with QAR 150.00 at LULU HYPERMARKET on 01/11/2026. Avl Bal QAR 9,850.00\n\nQAR 15,000.00 credited to your A/C ...1234 on 01/11/26 - SALARY")
+    page.click('#mnPaste button[type="submit"]'); page.wait_for_selector(".mn-rvlist", timeout=8000)
+    imp = DB["fin_imports"][0] if DB["fin_imports"] else {}
+    rows_ = [r for r in DB["fin_import_rows"] if r["import_id"] == imp.get("id")]
+    check("pasted SMS read on the phone into two lines waiting for review (nothing posted yet)", len(rows_) == 2 and all(r["status"] == "pending" for r in rows_) and imp.get("reader") == "rules", str(rows_)[:300])
+    sal_ = next((r for r in rows_ if r["direction"] == "in"), {})
+    check("salary SMS suggested as income", sal_.get("kind") == "income" and sal_.get("category_account_id") == f"{FE3[:8]}-acc-4000", str(sal_)[:200])
+    shot(page, "32-money-review")
+    nj = len(DB["fin_journals"])
+    page.click('[data-act="mn-rv-post"]'); page.wait_for_timeout(900)
+    check("posting the reviewed lines creates entries and marks lines posted", len(DB["fin_journals"]) == nj + 2 and all(r["status"] == "posted" for r in rows_), page.inner_text("#toast"))
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+    # same SMS again → flagged duplicate, unticked
+    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts"); page.click('[data-act="mn-paste"]'); page.wait_for_selector("#mn-text")
+    page.fill("#mn-text", "Your account XXXX1234 has been debited with QAR 150.00 at LULU HYPERMARKET on 01/11/2026.")
+    page.click('#mnPaste button[type="submit"]'); page.wait_for_selector(".mn-rvlist", timeout=8000)
+    check("the same message twice is flagged as a possible duplicate and not selected", page.locator(".mn-rv.dup").count() == 1 and not page.is_checked('.mn-rv.dup input[data-act="mn-rv-sel"]'))
+    page.click('[data-act="mn-rv-all"]'); page.click('[data-act="mn-rv-skip"]'); page.wait_for_timeout(500)
+    check("a duplicate can be skipped", DB["fin_import_rows"][-1]["status"] == "skipped")
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+    # enter it myself: paid for Dlusso from salary account
+    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts"); page.click('.mn-opt[data-act="mn-manual"]'); page.wait_for_selector("#mnManual")
+    page.click('[data-act="mn-kind"][data-kind="paid_for_business"]'); page.wait_for_selector("#mm-bizacc")
+    page.fill("#mm-amount", "200"); page.fill("#mm-desc", "Topaz fabric 10 m"); page.select_option("#mm-acc", f"{FE3[:8]}-acc-1010")
+    page.wait_for_timeout(100)
+    check("fabric is suggested as stock in the business's books", page.input_value("#mm-bizacc") == f"{FE1[:8]}-acc-1200", page.input_value("#mm-bizacc"))
+    page.set_input_files("#mm-file", files=[{"name": "topaz.jpg", "mimeType": "image/jpeg", "buffer": b"\xff\xd8\xff test"}]); page.wait_for_timeout(200)
+    page.click("#mmSave"); page.wait_for_timeout(900)
+    pt = DB["fin_partner_txns"][-1]
+    check("paid-for-Dlusso is recorded in both books with the personal bank as the source", pt["amount"] == 200 and pt["mirror_journal_id"] and any(l["journal_id"] == pt["mirror_journal_id"] and l["account_id"] == f"{FE3[:8]}-acc-1010" and float(l["credit"]) == 200 for l in DB["fin_lines"]))
+    check("its receipt is attached to the business transaction for both sides to see", any(d["txn_id"] == pt["id"] for d in DB["fin_partner_docs"]))
+    page.goto(BASE + f"/#/finance/{FE3}/transactions"); page.wait_for_selector(".mn-tx")
+    check("transactions list highlights business payments separately", page.locator(".mn-txrow.biz").count() >= 1 and "Paid for Dlusso" in page.inner_text(".mn-tx"))
+    page.click('[data-act="mn-filter"][data-f="business"]'); page.wait_for_timeout(200)
+    check("'For businesses' filter shows only business rows", page.locator(".mn-txrow").count() == page.locator(".mn-txrow.biz").count() and page.locator(".mn-txrow").count() >= 1)
+    shot(page, "33-money-transactions", True)
+    page.goto(BASE + f"/#/finance/{FE3}/month"); page.wait_for_selector(".mn-cats, .mn-cards.sm")
+    mt = page.inner_text("#view")
+    check("monthly report: salary as income, business money kept apart from spending", "15,000.00" in mt and "Paid for businesses" in mt and "200.00" in mt, mt[:400])
+    shot(page, "34-money-month", True)
+    # I owe: add an existing loan
+    page.goto(BASE + f"/#/finance/{FE3}/owe"); page.wait_for_selector('[data-act="mn-add-existing"]')
+    page.click('[data-act="mn-add-existing"]'); page.wait_for_selector("#mnExisting")
+    page.select_option("#ex-party", "__new"); page.wait_for_selector(".dlg"); page.fill("#dlgIn", "QNB"); page.click('.dlg [data-r="1"]'); page.wait_for_timeout(300)
+    page.fill("#ex-amt", "20000"); page.fill("#ex-inst", "1500"); page.fill("#ex-day", "25"); page.click("#exSave"); page.wait_for_timeout(900)
+    ob = DB["fin_obligations"][-1] if DB["fin_obligations"] else {}
+    check("existing loan saved as an opening balance with its instalment details", ob.get("installment") == 1500 and ob.get("due_day") == 25 and any(j["source"] == "opening" and "QNB" in j["memo"] for j in DB["fin_journals"]), str(ob)[:200])
+    page.wait_for_selector(".mn-group")
+    check("I owe lists the loan with its monthly instalment", "QNB" in page.inner_text("#view") and "1,500.00 a month" in page.inner_text("#view"), page.inner_text("#view")[:300])
+    shot(page, "35-money-owe", True)
+    page.goto(BASE + f"/#/finance/{FE3}/advanced"); page.wait_for_selector(".mn-adv")
+    page.click(f'.mn-adv a[href$="/entries"]'); page.wait_for_selector(".mn-advbar")
+    check("advanced accounting is still reachable", "Search entries" in page.inner_html("#view"))
+    # phone layout
+    page.set_viewport_size({"width": 390, "height": 844}); page.goto(BASE + f"/#/finance/{FE3}/overview"); page.wait_for_selector(".mn-cards")
+    check("phone: cards fit the screen (no sideways scroll)", page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"))
+    shot(page, "36-money-phone", True)
     ctx.close()
 
 

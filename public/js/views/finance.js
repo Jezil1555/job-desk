@@ -7,6 +7,7 @@ import { fin, entityById, accById, partyById, finRole, canWriteFin, isFinOwner, 
 import { renderPartners } from "./partners.js";
 import { renderIntercompany } from "./intercompany.js";
 import { renderProduction } from "./production.js";
+import { renderMoney, moneyCardFigures, MONEY_TABS, ADV_TABS } from "./money.js";
 import { money, r2, ACCOUNT_TYPES, SUBTYPE_LABEL, trialBalance, profitAndLoss, balanceSheet, cashFlow, ledger, invoiceStatus, INVOICE_STATUS_LABEL, aging, AGING_LABEL,
   budgetVsActual, monthStart, monthEnd, monthsBetween, fiscalYearStart, convert, natural, matchCandidates } from "../finance.js";
 
@@ -45,7 +46,7 @@ export function renderFinanceHome(view) {
     return { e, cash, owed, owe, pl, bs, html: `<a class="fin-card" href="#/finance/${e.id}/overview">
       <div class="fc-h"><b>${esc(e.name)}</b><span class="chip">${e.base_currency}</span>${e.kind === "personal" ? `<span class="chip">${ICON.lock} Personal</span>` : ""}</div>
       ${ls.length ? `<dl class="fc-kv"><dt>Cash & bank</dt><dd>${M(cash, e)}</dd>
-        ${e.kind === "personal" ? `<dt>Net worth</dt><dd>${M(bs.netWorth, e)}</dd><dt>This month</dt><dd class="${pl.netProfit < 0 ? "bad-text" : "ok-text"}">${M(pl.netProfit, e)} saved</dd>`
+        ${e.kind === "personal" ? (f => `<dt>Owed to me</dt><dd>${M(f.owed, e)}</dd><dt>I owe</dt><dd>${M(f.owe, e)}</dd><dt>Net position</dt><dd>${M(f.net, e)}</dd>`)(moneyCardFigures(e))
           : `<dt>Owed to you</dt><dd>${M(owed, e)}</dd><dt>You owe</dt><dd>${M(owe, e)}</dd><dt>Profit this month</dt><dd class="${pl.netProfit < 0 ? "bad-text" : "ok-text"}">${M(pl.netProfit, e)}</dd>`}</dl>`
         : `<p class="hint">No entries yet — start with opening balances.</p>`}
       <small class="hint">${ws ? "Linked to " + esc(ws.name) + " · " : ""}${esc(finRole(e.id) || "")}</small></a>` };
@@ -75,6 +76,10 @@ export function renderFinance(view, eid, tab = "overview", sub) {
   if (!fin.loaded) return renderFinanceHome(view);
   const e = entityById(eid);
   if (!e) { view.innerHTML = emptyState("Books not found", "They may have been removed, or you don't have access.", `<a class="btn" href="#/finance">All books</a>`); return; }
+  if (e.kind === "personal") { // simple money screens; the full accounting sits under Advanced
+    const classic = t => ({ entries, invoices: x => invoicesTab(x, "sale"), bills: x => invoicesTab(x, "purchase"), payments, banking, accounts, people, intercompany: renderIntercompany, budgets, reports, settings }[t] || overview)(e);
+    return renderMoney(view, e, MONEY_TABS[tab] || ADV_TABS[tab] ? tab : "overview", sub, classic);
+  }
   if (!FIN_TABS[tab] || (BUSINESS_ONLY.has(tab) && e.kind === "personal")) tab = "overview";
   const w = canWriteFin(eid);
   const tabs = Object.entries(FIN_TABS).filter(([k]) => !(BUSINESS_ONLY.has(k) && e.kind === "personal")).map(([k, l]) => [k, e.kind === "personal" && k === "invoices" ? "Money owed to me" : e.kind === "personal" && k === "bills" ? "Bills" : l]);

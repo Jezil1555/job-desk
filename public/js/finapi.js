@@ -12,6 +12,7 @@ export const fin = {
   ictxns: [], // inter-entity transactions
   prodOrders: [], prodCosts: [], receipts: [], stockExceptions: [], // production costing
   fxRevals: [], totalsBase: new Map(), // foreign currency
+  obligations: [], imports: [], importRows: [], balanceChecks: [], // simple money layer
   posted: [] // posted lines with entry_date, recomputed after each load
 };
 const PAGE = 1000;
@@ -28,7 +29,10 @@ export function loadFin(force = false) {
   if (fin.loading && !force) return fin.loading;
   fin.loading = (async () => {
     try {
-      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals] = await Promise.all([
+      // the simple money tables are optional: if they aren't there yet, the classic screens still load
+      const opt = q => all(q).catch(() => []);
+      const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals,
+        obligations, imports, importRows, balanceChecks] = await Promise.all([
         all(() => sb.from("fin_entities").select("*").order("created_at")),
         all(() => sb.from("fin_members").select("entity_id, user_id, role")),
         all(() => sb.from("fin_accounts").select("*").order("code")),
@@ -53,9 +57,14 @@ export function loadFin(force = false) {
         all(() => sb.from("fin_production_costs").select("*").order("cost_date").order("created_at")),
         all(() => sb.from("fin_goods_receipts").select("*").order("receipt_date", { ascending: false })),
         all(() => sb.from("fin_stock_exceptions").select("*").order("authorised_at", { ascending: false })),
-        all(() => sb.from("fin_fx_revaluations").select("*").order("rev_date", { ascending: false }))
+        all(() => sb.from("fin_fx_revaluations").select("*").order("rev_date", { ascending: false })),
+        opt(() => sb.from("fin_obligations").select("*").order("created_at")),
+        opt(() => sb.from("fin_imports").select("id, entity_id, source, title, account_id, reader, created_by, created_at").order("created_at", { ascending: false })),
+        opt(() => sb.from("fin_import_rows").select("*").order("import_id").order("row_no")),
+        opt(() => sb.from("fin_balance_checks").select("*").order("as_of", { ascending: false }).order("created_at", { ascending: false }))
       ]);
       Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals,
+        obligations, imports, importRows, balanceChecks,
         totals: new Map(totals.map(t => [t.invoice_id, t])), loaded: true, error: null });
       fin.posted = postedLines(lines, journals);
       fin.totalsBase = baseTotals(invoices, fin.totals);
@@ -211,3 +220,22 @@ export async function deletePartnerDoc(d) {
   if (d.storage_path) await sb.storage.from("finance").remove([d.storage_path]);
   fin.pdocs = fin.pdocs.filter(x => x.id !== d.id); return r;
 }
+
+/* ---------- simple money layer ---------- */
+/** Record what happened in plain words; the database posts the balanced entry (or both books for a business). Returns {journal_id, partner_txn_id}. */
+export const moneyPost = p => rpc("fin_money_post", { p });
+/** Store an import (original text kept) with its rows; the database flags lines already imported or already in the books. Returns the import id. */
+export const importAdd = (eid, source, title, raw, accountId, reader, rows) => rpc("fin_import_add", { p_entity: eid, p_source: source, p_title: title, p_raw: raw || null, p_account: accountId || null, p_reader: reader || "rules", p_rows: rows });
+export const importRowUpdate = (id, patch) => run(sb.from("fin_import_rows").update(patch).eq("id", id));
+export const importDelete = id => run(sb.from("fin_imports").delete().eq("id", id));
+export const importRowsOf = importId => fin.importRows.filter(r => r.import_id === importId).sort((a, b) => a.row_no - b.row_no);
+export const pendingRowsOf = eid => fin.importRows.filter(r => r.entity_id === eid && r.status === "pending");
+export async function saveObligation(o) {
+  const row = { side: o.side, kind: o.kind, name: o.name, original_amount: o.original_amount ?? null, installment: o.installment ?? null, due_day: o.due_day ?? null, due_date: o.due_date || null,
+    expected_date: o.expected_date || null, interest_rate: o.interest_rate ?? null, notes: o.notes || null };
+  if (o.id) return run(sb.from("fin_obligations").update(row).eq("id", o.id).select().single());
+  return run(sb.from("fin_obligations").insert({ ...row, entity_id: o.entity_id, account_id: o.account_id, party_id: o.party_id || null }).select().single());
+}
+export const obligationFor = (accountId, partyId) => fin.obligations.find(o => o.account_id === accountId && (o.party_id || null) === (partyId || null));
+export const addBalanceCheck = (eid, accountId, asOf, balance, note) => run(sb.from("fin_balance_checks").insert({ entity_id: eid, account_id: accountId, as_of: asOf, balance, note: note || null, created_by: state.user.id }).select().single());
+export const lastBalanceCheck = accountId => fin.balanceChecks.find(b => b.account_id === accountId);

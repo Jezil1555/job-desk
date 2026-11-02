@@ -10,6 +10,8 @@ import { parseCapture, guessContext, guessKind } from "../smart.js";
 import { sb, run } from "../api.js";
 
 const cap = { draft: null, saved: null };
+import { fin, canWriteFin } from "../finapi.js";
+const hasPersonalBooks = () => fin.loaded && fin.entities.some(e => e.kind === "personal" && !e.archived && canWriteFin(e.id));
 
 function defaults(over = {}) {
   const ws = over.workspace_id || state.prefs.default_ws || state.prefs.last_ws;
@@ -42,6 +44,7 @@ function render(sh) {
   const mem = membersOf(ws);
   sh.innerHTML = sheetHead("Quick capture", "Type it as you'd say it. Nothing is scheduled unless you add a date.") + `
   <form id="capForm" class="sh-body" novalidate>
+    ${hasPersonalBooks() ? `<button type="button" class="banner info cap-money" data-act="mn-capture">💰 Money instead? Snap a receipt, paste a bank SMS or upload a statement →</button>` : ""}
     <label class="field"><span>What's on your mind?</span><textarea class="input big" id="cap-title" rows="2" autofocus placeholder="e.g. Follow up with Anixter about the Belgium shipment tomorrow">${esc(d.title)}</textarea></label>
     <div id="cap-chips" class="chips cap-chips" aria-live="polite">${chipsHtml()}</div>
     <div class="seg2 capkind" role="radiogroup" aria-label="Save as">

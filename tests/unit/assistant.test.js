@@ -9,7 +9,7 @@ test("prompts carry only the given facts and forbid invention", () => {
   assert.match(buildRequest("action_items", { notes: "x" }).system, /Do not add deadlines/);
   assert.throws(() => buildRequest("action_items", { notes: " " }), /bad_input/);
   assert.throws(() => buildRequest("delete_everything", {}), /bad_action/);
-  assert.deepEqual(ACTIONS, ["draft_message", "action_items", "weekly_narrative", "categorize"]);
+  assert.deepEqual(ACTIONS, ["draft_message", "action_items", "weekly_narrative", "categorize", "extract_money"]);
 });
 
 test("model output is validated before it reaches the app", () => {
@@ -28,4 +28,16 @@ test("model call: request shape and error handling (no network)", async () => {
   assert.equal(r.text, "Hi Rashid"); assert.equal(sent.url, "https://api.anthropic.com/v1/messages"); assert.equal(sent.headers["x-api-key"], "k"); assert.equal(sent.body.model, "m");
   const bad = async () => ({ ok: false, status: 401, json: async () => ({ error: { message: "invalid x-api-key" } }) });
   await assert.rejects(callModel({ apiKey: "k", model: "m", req: buildRequest("draft_message", { subject: "x" }), fetchImpl: bad }), /model_error: 401 invalid x-api-key/);
+});
+
+test("extract_money: reads text or a document, keeps only valid ids, never guesses dates", async () => {
+  const { buildRequest: b, parseOutput: p } = await import("../../supabase/functions/assistant/core.js");
+  const r = b("extract_money", { text: "Debited QAR 5 at X", accounts: [{ id: "a1", name: "Groceries", type: "expense" }], base: "QAR", today: "2026-11-02", kind: "sms" });
+  assert.match(r.system, /never guess/); assert.match(r.messages[0].content, /Groceries/);
+  assert.equal(b("extract_money", { file: { media_type: "application/pdf", data: "AAA" } }).messages[0].content[0].type, "document");
+  assert.throws(() => b("extract_money", {}), /nothing to read/);
+  assert.throws(() => b("extract_money", { file: { media_type: "application/zip", data: "x" } }), /unsupported/);
+  const o = p("extract_money", '{"transactions":[{"txn_date":"03/11/26","amount":-12.5,"direction":"out","description":"Lulu","kind":"spend","category_account_id":"zz","confidence":"sure"},{"amount":0,"direction":"in","description":"x"}]}', { accounts: [{ id: "a1" }] });
+  assert.equal(o.transactions.length, 1);
+  assert.deepEqual([o.transactions[0].amount, o.transactions[0].txn_date, o.transactions[0].category_account_id, o.transactions[0].confidence], [12.5, null, null, "low"]);
 });

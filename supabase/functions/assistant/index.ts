@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const result = parseOutput(body.action!, out.text, body.input || {});
     // governance log: the suggestion (never the input) is recorded; the app records what the person did with it
     const ctx = body.context || {};
-    const TARGETS = ["task", "follow_up", "note", "weekly_review", "fin_account"], UUID = /^[0-9a-f-]{36}$/i;
+    const TARGETS = ["task", "follow_up", "note", "weekly_review", "fin_account", "fin_import"], UUID = /^[0-9a-f-]{36}$/i;
     const { data: prop } = await admin.from("ai_proposals").insert({ user_id: uid, action: body.action, proposal: result, model,
       target_type: TARGETS.includes(ctx.type) ? ctx.type : null, target_id: UUID.test(ctx.id || "") ? ctx.id : null }).select("id").single();
     return json({ ...result, model, proposal_id: prop?.id || null });

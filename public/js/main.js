@@ -12,6 +12,8 @@ import { renderNotes, handleNotesChange, handleNotesInput, NOTE_TABS } from "./v
 import { renderGoals, handleGoalsClick, handleGoalsChange, handleGoalsSubmit } from "./views/goals.js";
 import { renderReports, handleReportsClick, handleReportsChange, handleReportsSubmit, REPORT_TABS } from "./views/reports.js";
 import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
+import { MONEY_TABS, ADV_TABS } from "./views/money.js";
+import { handleMoneyClick, handleMoneyChange, handleMoneyInput, handleMoneySubmit, moneySheetReset } from "./sheets/money.js";
 import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
 import { loadFin, fin } from "./finapi.js";
 import { handleIcClick, handleIcChange, handleIcSubmit } from "./views/intercompany.js";
@@ -25,7 +27,7 @@ import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integ
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
-import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert } from "./views/other.js";
+import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
 
 const cfg = window.JOBDESK_CONFIG;
 const NAV = [
@@ -49,6 +51,7 @@ const navKey = r => ({ home: "home", tasks: "tasks", calendar: "tasks", followup
 
 function render() {
   if (!state.user) return;
+  if (state.prefs && document.documentElement.dataset.theme !== (state.prefs.theme || "light")) applyTheme(state.prefs.theme);
   const r = state.route = parseRoute();
   // deep links that open a panel over the Command Centre
   if (["t", "f", "n", "d"].includes(r.name)) {
@@ -77,7 +80,7 @@ function render() {
       case "goals": renderGoals(view, r.a || "habits"); break;
       case "reports": renderReports(view, r.a || "daily"); break;
       case "personal": renderPersonal(view); title = "Personal"; break;
-      case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((FIN_TABS[r.b] || "Overview")); } break;
+      case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((fe.kind === "personal" ? (MONEY_TABS[r.b] || ADV_TABS[r.b]) : FIN_TABS[r.b]) || "Overview"); } break;
       default: renderHome(view); title = "Home";
     }
   } catch (e) {
@@ -144,6 +147,7 @@ document.addEventListener("click", async e => {
   if (await handleSetupClick(act, el)) return;
   if (await handleHomeClick(act, el)) return;
   if (await handlePartnerClick(act, el, rerender)) return;
+  if (await handleMoneyClick(act, el, rerender)) return;
   if (await handleFinClick(act, el, rerender)) return;
   if (await handleAssistClick(act, el)) return;
   if (await handleIntegrationsClick(act, el)) return;
@@ -199,6 +203,7 @@ document.addEventListener("change", async e => {
   if (handleFxChange(e)) return;
   if (handleSetupChange(e)) return;
   if (await handlePartnerChange(e, rerender)) return;
+  if (await handleMoneyChange(e, rerender)) return;
   if (await handleFinChange(e, rerender)) return;
   if (handleAssistChange(e)) return;
   if (await handleIntegrationsChange(e)) return;
@@ -217,6 +222,7 @@ document.addEventListener("input", e => {
   if (handleKnowledgeInput(e)) return;
   if (handleNotesInput(e, keepFocus)) return;
   if (handlePartnerInput(e, keepFocus)) return;
+  if (handleMoneyInput(e, keepFocus)) return;
   if (handleFinInput(e, keepFocus)) return;
   if (e.target.id === "global-q") { state.ui.globalQ = e.target.value; searchDebounced(e.target.value); }
   if (e.target.id === "tl-search") { state.ui.search = e.target.value; listDebounced(); }
@@ -239,10 +245,11 @@ document.addEventListener("submit", async e => {
   if (await handleSetupSubmit(form)) return;
   if (handleHomeSubmit(form)) return;
   if (await handlePartnerSubmit(form)) return;
+  if (await handleMoneySubmit(form, rerender, e.submitter)) return;
   if (await handleFinSubmit(form, rerender, e.submitter)) return;
 });
 $("sheetWrap").addEventListener("click", e => { if (e.target.id === "sheetBackdrop") { closeSheet(); if (!sheetOpen()) clearTaskSheet(); } });
-window.addEventListener("hashchange", () => { closeAllSheets(); clearTaskSheet(); finSheetReset(); state.ui.selecting = false; state.ui.selected.clear(); render(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => { closeAllSheets(); clearTaskSheet(); finSheetReset(); moneySheetReset(); state.ui.selecting = false; state.ui.selected.clear(); render(); window.scrollTo(0, 0); });
 window.addEventListener("online", () => { $("offline").hidden = true; if (state.user) loadAll().catch(() => {}); });
 window.addEventListener("offline", () => { $("offline").hidden = false; });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.user && state.loaded && Date.now() - (state.loadedAt || 0) > 30000) { loadAll().catch(() => {}); loadFin(true); } });

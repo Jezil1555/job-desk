@@ -179,6 +179,7 @@ export function renderSettings(view) {
     <label class="field"><span>Email</span><input class="input" value="${esc(state.user.email)}" disabled></label>
     <label class="field"><span>Default workspace for Quick Capture</span><select class="input" id="set-defws"><option value="">Last used</option>${activeWorkspaces().filter(w => canWrite(w.id)).map(w => `<option value="${w.id}" ${state.prefs.default_ws === w.id ? "selected" : ""}>${esc(w.name)}</option>`).join("")}</select></label>
   </div>`)}
+  ${section("Appearance", `<label class="field"><span>Theme</span><select class="input" id="set-theme" style="max-width:16em">${[["light", "Light (default)"], ["dark", "Dark"], ["system", "Match my device"]].map(([k, l]) => `<option value="${k}" ${(state.prefs.theme || "light") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>`)}
   ${section("Command Centre sections", `<div class="checks">${Object.entries(HOME_SECTIONS).map(([k, v]) => `<label class="chk"><input type="checkbox" data-act="toggle-section" data-k="${k}" ${hidden.has(k) ? "" : "checked"}> ${esc(v)}</label>`).join("")}</div>`)}
   ${section("Saved task views", (state.prefs.saved_views || []).length ? `<ul class="plain">${state.prefs.saved_views.map((s, i) => `<li>★ ${esc(s.name)} <button class="linkbtn" data-act="delete-view" data-i="${i}">Remove</button></li>`).join("")}</ul>` : `<p class="calm">Save filter combinations from My Tasks with “Save view”.</p>`)}
   ${section("Notifications", pushCard() || `<p class="calm">${ICON.done} Phone notifications are on for this device. Reminders run on the server every 5 minutes: overdue (then daily), due within 24h, follow-up dates and escalations.</p>`)}
@@ -197,6 +198,7 @@ export async function handleSettingsChange(e) {
   const id = e.target.id;
   if (id === "set-name") { const v = e.target.value.trim(); const r = await run(sb.from("profiles").update({ display_name: v }).eq("id", state.user.id)); if (r.error) return toastError(r.error), true; state.me.display_name = v; state.profiles[state.user.id].display_name = v; toast("Name saved"); return true; }
   if (id === "set-tz") { const v = e.target.value; const r = await run(sb.from("profiles").update({ timezone: v }).eq("id", state.user.id)); if (r.error) return toastError(r.error), true; state.tz = v; state.me.timezone = v; toast("Time zone saved"); return true; }
+  if (id === "set-theme") { applyTheme(e.target.value); const r = await savePrefs({ theme: e.target.value }); r.error ? toastError(r.error) : toast("Theme saved"); return true; }
   if (id === "set-defws") { const r = await savePrefs({ default_ws: e.target.value || null }); r.error ? toastError(r.error) : toast("Saved"); return true; }
   return false;
 }
@@ -235,4 +237,13 @@ export function renderPlanned(view, key) {
   const p = PLANNED[key];
   view.innerHTML = `<div class="page-head"><div><h1>${esc(p.title)}</h1><p class="sub">Planned for ${p.phase}. Not built yet, so nothing here is real data.</p></div></div>
   <section class="planned"><span class="pl-ico">${p.icon}</span><div><h2>What's coming</h2><ul>${p.points.map(x => `<li>${esc(x)}</li>`).join("")}</ul>${p.note ? `<p class="hint">${esc(p.note)}</p>` : ""}</div></section>`;
+}
+
+/** Light unless the person chose otherwise; remembered on this device so the sign-in screen matches. */
+export function applyTheme(t) {
+  const v = ["light", "dark", "system"].includes(t) ? t : "light";
+  document.documentElement.dataset.theme = v;
+  try { localStorage.setItem("jd-theme", v); } catch (e) {}
+  const dark = v === "dark" || (v === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", dark ? "#121212" : "#ffffff");
 }

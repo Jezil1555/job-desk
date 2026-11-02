@@ -38,7 +38,8 @@ select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-4000-8000-0000000
 with e as (insert into public.fin_entities (name, kind, base_currency) values ('FinTest Trading', 'business', 'QAR') returning id) insert into ids select 'biz', id from e;
 with e as (insert into public.fin_entities (name, kind, base_currency) values ('FinTest Personal', 'personal', 'QAR') returning id) insert into ids select 'pers', id from e;
 insert into r(name, ok, detail) select 'business books seeded with a chart of accounts', count(*) = 26, count(*)::text from public.fin_accounts where entity_id = pg_temp.id('biz');
-insert into r(name, ok, detail) select 'personal books seeded with the personal template', count(*) = 25 and bool_or(name = 'Family support & remittances'), count(*)::text from public.fin_accounts where entity_id = pg_temp.id('pers');
+-- 25 from the template; 27 once simple_money (2 Nov) adds friends-loans and interest accounts
+insert into r(name, ok, detail) select 'personal books seeded with the personal template', count(*) in (25, 27) and bool_or(name = 'Family support & remittances'), count(*)::text from public.fin_accounts where entity_id = pg_temp.id('pers');
 insert into r(name, ok) select 'creator is owner of new books', role = 'owner' from public.fin_members where entity_id = pg_temp.id('biz') and user_id = 'aaaaaaaa-0000-4000-8000-0000000000fa';
 insert into ids select 'bank', id from public.fin_accounts where entity_id = pg_temp.id('biz') and code = '1010';
 insert into ids select 'cash', id from public.fin_accounts where entity_id = pg_temp.id('biz') and code = '1000';

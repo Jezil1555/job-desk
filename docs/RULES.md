@@ -99,6 +99,18 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 - **Audit**: every change to books, members, accounts, entries, invoices, payments, statement lines and budgets is written to an append-only finance log that members can read.
 - Receipts and invoices are stored in a private `finance` bucket and open through links that expire after 10 minutes.
 
+## Simple money screens (personal books, 2 Nov 2026)
+- **Personal books open on plain-language screens**: Overview (Owed to me, I owe, Cash & bank, Net position — each clickable), Transactions, Owed to me, I owe, Accounts, Monthly report. The full accounting (entries, claims, bills, payments, bank reconciliation, chart of accounts, budgets, reports, settings) sits under **Advanced**, unchanged.
+- **One posting function** (`fin_money_post`) turns what happened — spent, income, moved money, lent, got paid back, borrowed, paid a loan or card, paid for a business, business paid me back — into a balanced, posted entry through `fin_system_journal` (lock date, balance, numbering apply). Entries are ordinary posted entries and are corrected only by reversal.
+- **Paid for a business** goes through the partner account (`fin_partner_record`): personal bank/cash/card down, receivable from the business up, and the cost booked in the business's own books against "payable to partner". It is never personal spending. **Business paid me back** clears both sides and is never income. Can't exceed what's owed.
+- **Own transfers** are neither income nor spending. **Card bills** can't exceed what the card shows owed (so purchases aren't counted twice). Loan payments split principal and interest (interest → 6850). Repayments to you can't exceed what that person owes.
+- **Capture** reads Excel/CSV statements and pasted bank SMS/email on the device; photos and PDFs are read by the AI assistant (suggestions only). Every line waits in **review** with the original text kept (`fin_imports`, `fin_import_rows`); nothing is posted until you press Save. Lines already imported or already in the books (same account, amount, direction, ±3 days) are flagged and unticked; a line can be posted once only (unique key). Posted lines can't be edited.
+- **Suggestions**: your own history for the same merchant first, then business names, then rules; uncertain lines say why.
+- **Obligations** (`fin_obligations`) hold details the ledger can't (type, original amount, instalment, due day, expected repayment date, notes, documents). Balances always come from the ledger.
+- **What the bank shows** (`fin_balance_checks`) is stored apart from the ledger; differences are shown, never auto-adjusted.
+- Existing loans/amounts owed are added as **opening balances** (against Opening balances), not as income or spending.
+- Theme: light by default; dark or "match my device" in Settings → Appearance.
+
 ## Smart capture, briefing & messages (Phase 4)
 - Quick Capture reads what you type: dates (today, tomorrow, fri, next week, in 3 days, 5 nov, 12/11 — day first), times (3pm, 15:00), `follow up <date>`, `#workspace`, `@person`, `!high` / `!critical` / `!low`. Each is shown as a chip before saving; removing a chip keeps those words in the title. Nothing is scheduled unless you typed a date. A time on its own ("at 4pm") means today and is shown as a chip.
 - The Command Centre briefing is counted from stored records (your overdue, due today, follow-ups to chase, blocked, bills due within 7 days, habits).
