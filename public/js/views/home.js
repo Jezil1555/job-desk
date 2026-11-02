@@ -42,7 +42,7 @@ export function renderHome(view) {
   const parts = [];
   parts.push(`<div class="page-head"><div><h1 class="h-display">${greet}, ${esc(first)}</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long" })}${overdue.length ? ` · <a href="#/tasks/overdue">${overdue.length} overdue</a>` : ""}${inbox.length ? ` · <a href="#/tasks/inbox">${inbox.length} in inbox</a>` : ""}</p></div>
     <div class="filters"><select class="input sm" id="home-ws" aria-label="Workspace"><option value="">All workspaces</option>${activeWorkspaces().map(w => `<option value="${w.id}" ${w.id === wsFilter ? "selected" : ""}>${esc(w.name)}</option>`).join("")}</select></div></div>
-  <form id="homeCap" class="homecap" autocomplete="off"><input class="input" id="hc-title" placeholder="Capture a task or note — e.g. Pay Dlusso fabric supplier friday" aria-label="Quick capture"><button class="btn primary" type="submit">${ICON.plus}Capture</button></form>`);
+  <form id="homeCap" class="homecap" autocomplete="off"><input class="input" id="hc-title" placeholder="Capture a task or note — e.g. Pay Dlusso fabric supplier friday — press Enter" aria-label="Quick capture" enterkeyhint="done"><kbd class="homecap-k">↵</kbd></form>`);
 
   if (!state.workspaces.length) {
     view.innerHTML = parts.join("") + emptyState("Create your first workspace", "Workspaces keep QCloud, Dlusso, Fitness Hub, The Burgery and personal life separate.", `<button class="btn primary" data-act="new-workspace">New workspace</button>`);

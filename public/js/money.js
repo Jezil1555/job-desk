@@ -278,10 +278,46 @@ export function kindNeeds(kind) {
   }[kind] || {};
 }
 
+/* ======================= currencies ======================= */
+export const CURRENCIES = ["QAR", "INR", "BHD", "AED", "SAR", "KWD", "OMR", "USD", "EUR", "GBP"];
+/** Convert an amount in `ccy` to the base currency using planning rates ({INR: 26.10} = 26.10 INR per 1 base). Null when no rate is set. */
+export function toBase(native, ccy, rates, base) {
+  if (!ccy || ccy === base) return r2(native);
+  const k = Number((rates || {})[ccy]); return k > 0 ? r2(Number(native) / k) : null;
+}
+export function fromBase(amount, ccy, rates, base) {
+  if (!ccy || ccy === base) return r2(amount);
+  const k = Number((rates || {})[ccy]); return k > 0 ? r2(Number(amount) * k) : null;
+}
+/** An account's balance in its own currency (signed like debit − credit), from the foreign amounts on its lines. */
+export function nativeBalance(lines, acc) {
+  if (!acc || !acc.currency) return null;
+  return r2(lines.filter(l => l.account_id === acc.id && l.fx_currency === acc.currency).reduce((s, l) => s + Number(l.fx_amount || 0), 0));
+}
+/** The foreign amount of a journal for display: from the rate record, else the first foreign line. */
+export function journalFx(jlines, fxRow, base) {
+  if (fxRow) return { ccy: fxRow.currency, amount: Number(fxRow.native_amount), planning: fxRow.rate_source === "planning" };
+  const l = jlines.find(x => x.fx_currency && x.fx_currency !== base && x.fx_amount);
+  return l ? { ccy: l.fx_currency, amount: Math.abs(Number(l.fx_amount)), planning: false } : null;
+}
+/** Budget vs actual for one category in the budget's own currency. Actual uses the foreign amount where the line has it, else converts at the planning rate. */
+export function budgetActual(lines, accountId, ccy, rates, base, from, to) {
+  let base_ = 0, native = 0, estimated = false;
+  for (const l of lines) {
+    if (l.account_id !== accountId || l.entry_date < from || l.entry_date > to) continue;
+    const b = Number(l.debit) - Number(l.credit); base_ += b;
+    if (!ccy || ccy === base) continue;
+    if (l.fx_currency === ccy && l.fx_amount != null) native += Number(l.fx_amount);
+    else { const c = fromBase(b, ccy, rates, base); if (c === null) return { base: r2(base_), native: null, estimated: true }; native += c; estimated = true; }
+  }
+  return { base: r2(base_), native: ccy && ccy !== base ? r2(native) : r2(base_), estimated };
+}
+
 /** Check a review/manual row is complete enough to post. Returns a plain-words problem or null. */
-export function rowProblem(r) {
+export function rowProblem(r, base) {
   if (!r.kind) return "Say what it was";
   if (!(Number(r.amount) > 0)) return "Amount missing";
+  if (base && r.currency && r.currency !== base && !(Number(r.base_amount) > 0)) return `${base} amount missing`;
   if (!r.txn_date) return "Date missing";
   if (!r.account_id) return "Choose the bank, cash or card account";
   const n = kindNeeds(r.kind);

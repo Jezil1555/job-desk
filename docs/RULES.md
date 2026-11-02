@@ -109,6 +109,10 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 - **Obligations** (`fin_obligations`) hold details the ledger can't (type, original amount, instalment, due day, expected repayment date, notes, documents). Balances always come from the ledger.
 - **What the bank shows** (`fin_balance_checks`) is stored apart from the ledger; differences are shown, never auto-adjusted.
 - Existing loans/amounts owed are added as **opening balances** (against Opening balances), not as income or spending.
+- **Currencies**: books report in one base currency (Personal: QAR), but bank, cash, card, savings, investment and loan accounts can be held in another (INR, BHD…). Every line on such an account carries its own-currency amount, so its balance is exact; a classic entry without it is refused. A foreign payment stores both amounts: the base amount is what actually left/arrived when known, otherwise the planning rate is offered and the entry is flagged (`fin_money_fx.rate_source`). No rate is ever assumed silently.
+- **Businesses in another currency** (The Burgery, INR): paying for them records the business's own amount in its books and the QAR amount in personal books; once the business has repaid everything, any leftover difference is cleared to 6870 Exchange differences. Fitness Hub's books are BHD (changed 2 Nov, before any entries).
+- **Budgets** can be set per line in any currency; the base equivalent (planning rate) is kept too so totals and the classic budget screen work. Actuals use the real foreign amount where recorded, otherwise the planning rate (shown ≈).
+- One **Capture** button (top bar; centre button on phones): on personal money pages it captures money, elsewhere a task or note. The sidebar shows the J. Desk wordmark; the J. mark sits in the sidebar footer.
 - Theme: light by default; dark or "match my device" in Settings → Appearance.
 
 ## Smart capture, briefing & messages (Phase 4)

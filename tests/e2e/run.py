@@ -41,7 +41,7 @@ def fin_fixture():
             "fin_parties": [], "fin_journals": [], "fin_lines": [], "fin_invoices": [], "fin_invoice_lines": [], "fin_payments": [], "fin_allocations": [], "fin_items": [],
             "fin_stock_moves": [], "fin_statement_lines": [], "fin_budgets": [], "fin_files": [], "fin_audit": [], "fin_partner_links": [], "fin_partner_txns": [], "fin_partner_docs": [], "fin_ic_txns": [],
             "fin_production_orders": [], "fin_production_costs": [], "fin_goods_receipts": [], "fin_stock_exceptions": [], "fin_fx_revaluations": [],
-            "fin_obligations": [], "fin_imports": [], "fin_import_rows": [], "fin_balance_checks": []}
+            "fin_obligations": [], "fin_imports": [], "fin_import_rows": [], "fin_balance_checks": [], "fin_money_fx": []}
 
 def fresh_db():
     t = lambda **k: {"id": k.pop("id", str(uuid.uuid4())), "workspace_id": WS[1], "project_id": None, "parent_id": None, "milestone_id": None, "title": "Task", "description": None,
@@ -287,6 +287,7 @@ def handle(route):
                 if it["currency"] == next(e for e in DB["fin_entities"] if e["id"] == it["entity_id"])["base_currency"]: it["currency"] = None
                 if not it["currency"]: it["fx_rate"] = None
             if table == "fin_invoice_lines": it = {"item_id": None, "account_id": None, **it, "amount": round(float(it["qty"]) * float(it["unit_price"]), 2)}
+            if table == "fin_accounts": it = {"is_active": True, "system_key": None, "description": None, "currency": None, **it}
             if table == "fin_statement_lines": it = {"status": "unmatched", "matched_line_id": None, "reference": None, **it}
             rows.append(it); out.append(it)
         return reply(out[0] if single else out, 201)
@@ -335,7 +336,7 @@ def sys_journal(eid, date, memo, source, source_id, lines):
                                "status": "posted", "reversal_of": None, "reversed_by": None, "posted_by": ME, "created_by": ME, "created_at": iso(now)})
     for i, l in enumerate(lines):
         DB["fin_lines"].append({"id": str(uuid.uuid4()), "journal_id": jid, "entity_id": eid, "account_id": l["account_id"], "party_id": l.get("party_id"), "description": l.get("description"),
-                                "debit": l.get("debit", 0), "credit": l.get("credit", 0), "statement_line_id": None, "sort": i})
+                                "debit": l.get("debit", 0), "credit": l.get("credit", 0), "fx_currency": l.get("fx_currency"), "fx_amount": l.get("fx_amount"), "statement_line_id": None, "sort": i})
     return jid
 def p_balance(link_id):
     k = next(x for x in DB["fin_partner_links"] if x["id"] == link_id)
@@ -505,6 +506,18 @@ def money_rpc(fn, b):
                 "created_at": iso(now), "posted_at": None, "posted_by": None})
         return iid
     p = b["p"]; eid = p["entity_id"]; kind = p["kind"]; amt = round(float(p["amount"]), 2); m = acc_of(p["account_id"]); c = acc_of(p.get("category_account_id")) if p.get("category_account_id") else None
+    base = next(e["base_currency"] for e in DB["fin_entities"] if e["id"] == eid); ccy = p.get("currency") or base; fx = float(p["fx_amount"]) if p.get("fx_amount") else None
+    if ccy != base and not fx: raise FinError(f"fx_amount_required: enter the {ccy} amount as well as the {base} amount")
+    if m and m.get("currency") and ccy != m["currency"]: raise FinError(f"currency_mismatch: {m['name']} is kept in {m['currency']}")
+    def fxl(acct, sign):  # signed foreign amount on a line when the account is foreign or the payment was foreign
+        if acct.get("currency"): return {"fx_currency": acct["currency"], "fx_amount": sign * (float(p["to_fx_amount"]) if p.get("to_fx_amount") and acct is c else fx)}
+        return {"fx_currency": ccy, "fx_amount": sign * fx} if fx and acct is not m else {}
+    if kind == "opening":
+        op = next(a for a in DB["fin_accounts"] if a["entity_id"] == eid and a["system_key"] == "opening")
+        ls = [{"account_id": m["id"], "debit": amt, **fxl(m, 1)}, {"account_id": op["id"], "credit": amt}] if m["type"] == "asset" else [{"account_id": op["id"], "debit": amt}, {"account_id": m["id"], "credit": amt, **fxl(m, -1)}]
+        jid = sys_journal(eid, p["txn_date"], p.get("description") or "Opening balance", "opening", None, ls)
+        if fx: DB["fin_money_fx"].append({"journal_id": jid, "entity_id": eid, "currency": ccy, "native_amount": fx, "base_amount": amt, "rate": round(fx / amt, 8), "rate_source": p.get("rate_source") or "entered"})
+        return {"journal_id": jid, "partner_txn_id": None}
     if not m or m["subtype"] not in ("cash", "bank", "card"): raise FinError("bad_account: choose the bank, cash or card account the money moved through")
     desc = p.get("description") or p.get("merchant") or ""
     if not desc: raise FinError("description_required: say what it was for")
@@ -521,7 +534,7 @@ def money_rpc(fn, b):
     else:
         if not c: raise FinError("category_required: choose what it was for")
         pty = p.get("party_id"); intr = float(p.get("interest") or 0)
-        if kind == "spend": ls = [{"account_id": c["id"], "party_id": pty, "debit": amt}, {"account_id": m["id"], "credit": amt}]
+        if kind == "spend": ls = [{"account_id": c["id"], "party_id": pty, "debit": amt, **fxl(c, 1)}, {"account_id": m["id"], "credit": amt, **fxl(m, -1)}]
         elif kind == "income": ls = [{"account_id": m["id"], "debit": amt}, {"account_id": c["id"], "party_id": pty, "credit": amt}]
         elif kind == "transfer": ls = [{"account_id": c["id"], "debit": amt}, {"account_id": m["id"], "credit": amt}]
         elif kind == "lent": ls = [{"account_id": c["id"], "party_id": pty, "debit": amt}, {"account_id": m["id"], "credit": amt}]
@@ -531,10 +544,12 @@ def money_rpc(fn, b):
         elif kind == "borrowed": ls = [{"account_id": m["id"], "debit": amt}, {"account_id": c["id"], "party_id": pty, "credit": amt}]
         else: ls = [{"account_id": c["id"], "party_id": pty, "debit": round(amt - intr, 2)}, {"account_id": m["id"], "credit": amt}] + ([{"account_id": next(a["id"] for a in DB["fin_accounts"] if a["entity_id"] == eid and a["type"] == "expense"), "debit": intr}] if intr else [])
         jid = sys_journal(eid, p["txn_date"], desc, "manual", None, ls)
+    if fx: DB["fin_money_fx"].append({"journal_id": jid, "entity_id": eid, "currency": ccy, "native_amount": fx, "base_amount": amt, "rate": round(fx / amt, 8), "rate_source": p.get("rate_source") or "entered"})
     if row: row.update(status="posted", journal_id=jid, partner_txn_id=ptx, kind=kind, posted_at=iso(dt.datetime.now(dt.timezone.utc)), posted_by=ME)
     return {"journal_id": jid, "partner_txn_id": ptx}
 def fin_rpc(fn, b):
     if fn in ("fin_money_post", "fin_import_add"): return money_rpc(fn, b)
+    if fn == "fin_money_link_business": return partner_rpc("fin_partner_link_create", {"p_entity": b["p_business"], "p_partner_name": b["p_partner_name"], "p_mirror_entity": b["p_personal"]})
     if fn.startswith("fin_production_") or fn.startswith("fin_goods_receipt"): return prod_rpc(fn, b)
     if fn.startswith("fin_ic_"): return ic_rpc(fn, b)
     if fn.startswith("fin_partner_"): return partner_rpc(fn, b)
@@ -1122,7 +1137,7 @@ with sync_playwright() as pw:
     shot(page, "31-money-owed-dlusso")
     page.keyboard.press("Escape"); page.wait_for_timeout(200)
     # capture: paste SMS
-    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts")
+    page.click('.tb-capture'); page.wait_for_selector(".mn-opts")
     page.click('[data-act="mn-paste"]'); page.wait_for_selector("#mn-text")
     page.fill("#mn-text", "Your account XXXX1234 has been debited with QAR 150.00 at LULU HYPERMARKET on 01/11/2026. Avl Bal QAR 9,850.00\n\nQAR 15,000.00 credited to your A/C ...1234 on 01/11/26 - SALARY")
     page.click('#mnPaste button[type="submit"]'); page.wait_for_selector(".mn-rvlist", timeout=8000)
@@ -1137,7 +1152,7 @@ with sync_playwright() as pw:
     check("posting the reviewed lines creates entries and marks lines posted", len(DB["fin_journals"]) == nj + 2 and all(r["status"] == "posted" for r in rows_), page.inner_text("#toast"))
     page.keyboard.press("Escape"); page.wait_for_timeout(200)
     # same SMS again → flagged duplicate, unticked
-    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts"); page.click('[data-act="mn-paste"]'); page.wait_for_selector("#mn-text")
+    page.click('.tb-capture'); page.wait_for_selector(".mn-opts"); page.click('[data-act="mn-paste"]'); page.wait_for_selector("#mn-text")
     page.fill("#mn-text", "Your account XXXX1234 has been debited with QAR 150.00 at LULU HYPERMARKET on 01/11/2026.")
     page.click('#mnPaste button[type="submit"]'); page.wait_for_selector(".mn-rvlist", timeout=8000)
     check("the same message twice is flagged as a possible duplicate and not selected", page.locator(".mn-rv.dup").count() == 1 and not page.is_checked('.mn-rv.dup input[data-act="mn-rv-sel"]'))
@@ -1145,7 +1160,7 @@ with sync_playwright() as pw:
     check("a duplicate can be skipped", DB["fin_import_rows"][-1]["status"] == "skipped")
     page.keyboard.press("Escape"); page.wait_for_timeout(200)
     # enter it myself: paid for Dlusso from salary account
-    page.click('[data-act="mn-capture"]'); page.wait_for_selector(".mn-opts"); page.click('.mn-opt[data-act="mn-manual"]'); page.wait_for_selector("#mnManual")
+    page.click('.tb-capture'); page.wait_for_selector(".mn-opts"); page.click('.mn-opt[data-act="mn-manual"]'); page.wait_for_selector("#mnManual")
     page.click('[data-act="mn-kind"][data-kind="paid_for_business"]'); page.wait_for_selector("#mm-bizacc")
     page.fill("#mm-amount", "200"); page.fill("#mm-desc", "Topaz fabric 10 m"); page.select_option("#mm-acc", f"{FE3[:8]}-acc-1010")
     page.wait_for_timeout(100)
@@ -1177,6 +1192,43 @@ with sync_playwright() as pw:
     page.goto(BASE + f"/#/finance/{FE3}/advanced"); page.wait_for_selector(".mn-adv")
     page.click(f'.mn-adv a[href$="/entries"]'); page.wait_for_selector(".mn-advbar")
     check("advanced accounting is still reachable", "Search entries" in page.inner_html("#view"))
+    # one Capture button; branding
+    check("sidebar has no separate Quick capture button and shows the J. Desk wordmark", page.locator(".capture-btn").count() == 0 and "J. Desk" in page.inner_text(".sidenav .brand") and "by Jezil" in page.inner_text(".sidenav .brand"))
+    check("the J. mark sits in the sidebar footer, away from the wordmark", page.locator(".sidenav .brand img").count() == 0 and page.locator(".side-foot .side-mark").count() == 1)
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap")
+    check("home capture box has no extra Capture button (Enter saves)", page.locator("#homeCap button").count() == 0)
+    page.click(".tb-capture"); page.wait_for_selector("#capForm")
+    check("top Capture on Home opens task capture", page.locator("#capForm").count() == 1); page.keyboard.press("Escape"); page.wait_for_timeout(150)
+    page.goto(BASE + f"/#/finance/{FE3}/accounts"); page.wait_for_selector('[data-act="mn-new-account"]')
+    check("money pages have no second Capture button in the page", page.locator(".mn-head .btn").count() == 0)
+    # an INR account with an opening balance at the planning rate
+    page.click('[data-act="mn-new-account"]'); page.wait_for_selector("#mnNewAcc")
+    page.fill("#na-name", "Federal Bank NRO"); page.select_option("#na-ccy", "INR"); page.fill("#na-bal", "52000"); page.wait_for_timeout(100)
+    check("QAR equivalent prefilled from the planning rate (26.10)", page.input_value("#na-base") == "1992.34", page.input_value("#na-base"))
+    page.click("#naSave"); page.wait_for_timeout(800)
+    inr = next((a for a in DB["fin_accounts"] if a["name"] == "Federal Bank NRO"), {})
+    fx0 = DB["fin_money_fx"][-1] if DB["fin_money_fx"] else {}
+    check("INR account created with its INR opening balance, flagged as planning rate", inr.get("currency") == "INR" and fx0.get("native_amount") == 52000 and fx0.get("rate_source") == "planning", str(fx0))
+    page.wait_for_timeout(400); page.wait_for_selector(".mn-grid .chip")
+    check("accounts page shows the INR balance in INR", "INR 52,000.00" in page.inner_text("#view") or "52,000.00" in page.inner_text("#view"), page.inner_text("#view")[:400])
+    # spend an INR price from the QAR bank, entering what actually left
+    page.click(".tb-capture"); page.wait_for_selector(".mn-opts"); page.click('.mn-opt[data-act="mn-manual"]'); page.wait_for_selector("#mnManual")
+    page.select_option("#mm-acc", f"{FE3[:8]}-acc-1010"); page.wait_for_timeout(100); page.select_option("#mm-ccy", "INR"); page.wait_for_selector("#mm-native")
+    page.fill("#mm-native", "2610"); page.wait_for_timeout(100)
+    check("INR amount fills the QAR amount from the planning rate", page.input_value("#mm-amount") == "100", page.input_value("#mm-amount"))
+    page.fill("#mm-amount", "101.5"); page.fill("#mm-desc", "Flight booked in INR"); page.select_option("#mm-cat", f"{FE3[:8]}-acc-6900"); page.click("#mmSave"); page.wait_for_timeout(800)
+    fx1 = DB["fin_money_fx"][-1]
+    check("saved with both amounts; the real QAR figure is marked as actual", fx1.get("native_amount") == 2610 and fx1.get("base_amount") == 101.5 and fx1.get("rate_source") == "actual", str(fx1))
+    # budgets in their own currency
+    page.goto(BASE + f"/#/finance/{FE3}/budget"); page.wait_for_selector("#mnBudget")
+    row = page.locator(f'tr[data-bacc="{FE3[:8]}-acc-6900"]'); row.locator("select").select_option("INR"); row.locator("input").fill("50000")
+    page.click('[data-act="mn-budget-save"]'); page.wait_for_timeout(700)
+    bg = next((x for x in DB.get("fin_budgets", []) if x["account_id"] == f"{FE3[:8]}-acc-6900"), {})
+    check("budget saved in INR with its QAR equivalent", bg.get("native_currency") == "INR" and bg.get("native_amount") == 50000 and abs(bg.get("amount", 0) - 1915.71) < 0.01, str(bg))
+    page.wait_for_selector("#mnBudget")
+    bt = page.inner_text(f'tr[data-bacc="{FE3[:8]}-acc-6900"]')
+    check("budget shows actual spend in INR against the INR budget (≈ where converted)", "INR" in bt and "≈" in bt and "43,475.00" in bt, bt)
+    shot(page, "37-money-budget", True)
     # phone layout
     page.set_viewport_size({"width": 390, "height": 844}); page.goto(BASE + f"/#/finance/{FE3}/overview"); page.wait_for_selector(".mn-cards")
     check("phone: cards fit the screen (no sideways scroll)", page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"))

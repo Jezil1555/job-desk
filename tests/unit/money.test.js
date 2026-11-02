@@ -112,3 +112,21 @@ test("businessParties finds linked businesses from partner links and related par
   const m = businessParties("pers", { plinks: [{ entity_id: "dl", mirror_entity_id: "pers", mirror_party_id: "p1" }], parties: [{ id: "p2", entity_id: "pers", related_entity_id: "fh", name: "Fitness Hub" }], entities: [{ id: "dl", name: "Dlusso Bespoke" }, { id: "fh", name: "Fitness Hub" }] });
   assert.equal(m.get("p1").name, "Dlusso Bespoke"); assert.equal(m.get("p2").entity_id, "fh");
 });
+
+import { toBase, fromBase, nativeBalance, journalFx, budgetActual } from "../../public/js/money.js";
+test("currency helpers: planning-rate conversion, native balances, budget actuals", () => {
+  const rates = { base: "QAR", INR: 26.10, BHD: 0.1035 };
+  assert.equal(toBase(2610, "INR", rates, "QAR"), 100);
+  assert.equal(toBase(10, "BHD", rates, "QAR"), 96.62);
+  assert.equal(toBase(10, "USD", rates, "QAR"), null, "no planning rate → no guess");
+  assert.equal(fromBase(100, "INR", rates, "QAR"), 2610);
+  const inr = { id: "inr", currency: "INR" };
+  const ls = [{ account_id: "inr", fx_currency: "INR", fx_amount: 52000, debit: 1992.34, credit: 0, entry_date: "2026-11-01" }, { account_id: "inr", fx_currency: "INR", fx_amount: -5000, debit: 0, credit: 191.57, entry_date: "2026-11-02" }];
+  assert.equal(nativeBalance(ls, inr), 47000);
+  assert.equal(nativeBalance(ls, { id: "x" }), null);
+  assert.deepEqual(journalFx([], { currency: "INR", native_amount: 5000, rate_source: "planning" }, "QAR"), { ccy: "INR", amount: 5000, planning: true });
+  const ex = [{ account_id: "fam", debit: 191.57, credit: 0, fx_currency: "INR", fx_amount: 5000, entry_date: "2026-11-02" }, { account_id: "fam", debit: 100, credit: 0, entry_date: "2026-11-03" }];
+  const b = budgetActual(ex, "fam", "INR", rates, "QAR", "2026-11-01", "2026-11-30");
+  assert.deepEqual(b, { base: 291.57, native: 7610, estimated: true });
+  assert.deepEqual(budgetActual(ex, "fam", "QAR", rates, "QAR", "2026-11-01", "2026-11-30"), { base: 291.57, native: 291.57, estimated: false });
+});

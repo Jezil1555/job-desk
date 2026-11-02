@@ -12,7 +12,7 @@ export const fin = {
   ictxns: [], // inter-entity transactions
   prodOrders: [], prodCosts: [], receipts: [], stockExceptions: [], // production costing
   fxRevals: [], totalsBase: new Map(), // foreign currency
-  obligations: [], imports: [], importRows: [], balanceChecks: [], // simple money layer
+  obligations: [], imports: [], importRows: [], balanceChecks: [], moneyFx: [], // simple money layer
   posted: [] // posted lines with entry_date, recomputed after each load
 };
 const PAGE = 1000;
@@ -32,7 +32,7 @@ export function loadFin(force = false) {
       // the simple money tables are optional: if they aren't there yet, the classic screens still load
       const opt = q => all(q).catch(() => []);
       const [entities, members, accounts, parties, journals, lines, invoices, invLines, totals, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals,
-        obligations, imports, importRows, balanceChecks] = await Promise.all([
+        obligations, imports, importRows, balanceChecks, moneyFx] = await Promise.all([
         all(() => sb.from("fin_entities").select("*").order("created_at")),
         all(() => sb.from("fin_members").select("entity_id, user_id, role")),
         all(() => sb.from("fin_accounts").select("*").order("code")),
@@ -61,10 +61,11 @@ export function loadFin(force = false) {
         opt(() => sb.from("fin_obligations").select("*").order("created_at")),
         opt(() => sb.from("fin_imports").select("id, entity_id, source, title, account_id, reader, created_by, created_at").order("created_at", { ascending: false })),
         opt(() => sb.from("fin_import_rows").select("*").order("import_id").order("row_no")),
-        opt(() => sb.from("fin_balance_checks").select("*").order("as_of", { ascending: false }).order("created_at", { ascending: false }))
+        opt(() => sb.from("fin_balance_checks").select("*").order("as_of", { ascending: false }).order("created_at", { ascending: false })),
+        opt(() => sb.from("fin_money_fx").select("*").order("created_at", { ascending: false }))
       ]);
       Object.assign(fin, { entities, members, accounts, parties, journals, lines, invoices, invLines, payments, allocations, items, moves, statement, budgets, files, plinks, ptxns, pdocs, ictxns, prodOrders, prodCosts, receipts, stockExceptions, fxRevals,
-        obligations, imports, importRows, balanceChecks,
+        obligations, imports, importRows, balanceChecks, moneyFx,
         totals: new Map(totals.map(t => [t.invoice_id, t])), loaded: true, error: null });
       fin.posted = postedLines(lines, journals);
       fin.totalsBase = baseTotals(invoices, fin.totals);
@@ -239,3 +240,6 @@ export async function saveObligation(o) {
 export const obligationFor = (accountId, partyId) => fin.obligations.find(o => o.account_id === accountId && (o.party_id || null) === (partyId || null));
 export const addBalanceCheck = (eid, accountId, asOf, balance, note) => run(sb.from("fin_balance_checks").insert({ entity_id: eid, account_id: accountId, as_of: asOf, balance, note: note || null, created_by: state.user.id }).select().single());
 export const lastBalanceCheck = accountId => fin.balanceChecks.find(b => b.account_id === accountId);
+/** Link one of your businesses to these personal books (owner of both). */
+export const moneyLinkBusiness = (personalId, businessId) => rpc("fin_money_link_business", { p_personal: personalId, p_business: businessId, p_partner_name: (state.me && state.me.display_name) || "Owner" });
+export const fxOfJournal = jid => fin.moneyFx.find(x => x.journal_id === jid);

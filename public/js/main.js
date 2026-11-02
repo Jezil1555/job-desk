@@ -13,7 +13,9 @@ import { renderGoals, handleGoalsClick, handleGoalsChange, handleGoalsSubmit } f
 import { renderReports, handleReportsClick, handleReportsChange, handleReportsSubmit, REPORT_TABS } from "./views/reports.js";
 import { renderFinanceHome, renderFinance, FIN_TABS } from "./views/finance.js";
 import { MONEY_TABS, ADV_TABS } from "./views/money.js";
-import { handleMoneyClick, handleMoneyChange, handleMoneyInput, handleMoneySubmit, moneySheetReset } from "./sheets/money.js";
+import { handleMoneyClick, handleMoneyChange, handleMoneyInput, handleMoneySubmit, moneySheetReset, openMoneyCapture } from "./sheets/money.js";
+// one Capture everywhere: on your personal money pages it captures money (receipt, statement, SMS); elsewhere a task or note
+const isPersonalFinance = () => state.route.name === "finance" && fin.loaded && (fin.entities.find(x => x.id === state.route.a) || {}).kind === "personal";
 import { handleFinClick, handleFinChange, handleFinInput, handleFinSubmit, finSheetReset } from "./sheets/finforms.js";
 import { loadFin, fin } from "./finapi.js";
 import { handleIcClick, handleIcChange, handleIcSubmit } from "./views/intercompany.js";
@@ -103,12 +105,11 @@ function renderNav() {
   } : {};
   const saved = state.prefs.saved_views || [];
   $("sidenav").innerHTML = `
-    <div class="brand"><img src="/icons/logo.svg" alt="" width="30" height="30"><div><span class="wm">J<i>.</i> Desk</span><small class="byline">by Jezil</small></div></div>
-    <button class="capture-btn" data-act="capture">${ICON.plus}<span>Quick capture</span><kbd>N</kbd></button>
+    <a class="brand" href="#/home" aria-label="J. Desk home"><span class="wm">J<i>.</i> Desk</span><small class="byline">by Jezil</small></a>
     <nav aria-label="Main">${NAV.map(n => `<a href="${n.href}" class="${k === n.key ? "on" : ""} ${n.soon ? "soon" : ""}">${ICON[n.icon]}<span>${n.label}</span>${n.soon ? `<small>${n.soon}</small>` : counts[n.key] ? `<b class="cnt">${counts[n.key]}</b>` : ""}</a>`).join("")}</nav>
     ${saved.length ? `<div class="subnav"><p>Saved views</p>${saved.map((s, i) => `<a href="#/tasks/${s.view}" data-act="apply-view" data-i="${i}">★ ${esc(s.name)}</a>`).join("")}</div>` : ""}
     <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>
-    <div class="side-foot"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
+    <div class="side-foot"><img class="side-mark" src="/icons/logo.svg" alt="J." width="26" height="26" title="J. Desk"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
   $("bottomnav").innerHTML = [
     ["home", "#/home", "home", "Home"], ["tasks", "#/tasks/today", "tasks", "Tasks"], ["capture", null, "plus", "Capture"], ["workspaces", "#/workspaces", "folder", "Projects"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
   ].map(([key, href, ic, label]) => key === "capture" ? `<button class="bn-capture" data-act="capture" aria-label="Quick capture">${ICON.plus}</button>` :
@@ -155,7 +156,7 @@ document.addEventListener("click", async e => {
   const id = el.dataset.id;
   switch (act) {
     case "close-sheet": closeSheet(); if (!sheetOpen()) clearTaskSheet(); break;
-    case "capture": openCapture({ workspace_id: el.dataset.ws || undefined, project_id: el.dataset.project || null, status: el.dataset.project ? "not_started" : undefined }); break;
+    case "capture": if (!el.dataset.ws && !el.dataset.project && isPersonalFinance()) { openMoneyCapture(state.route.a); break; } openCapture({ workspace_id: el.dataset.ws || undefined, project_id: el.dataset.project || null, status: el.dataset.project ? "not_started" : undefined }); break;
     case "open-task": e.preventDefault(); openTask(id); break;
     case "open-followup": openFollowUp(id); break;
     case "open-project": location.hash = "#/p/" + id; closeAllSheets(); break;
@@ -184,7 +185,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && sheetOpen() && $("dialog").hidden) { closeSheet(); if (!sheetOpen()) clearTaskSheet(); return; }
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !state.loaded) return;
-  if ((e.key === "n" || e.key === "c") && !sheetOpen()) { e.preventDefault(); openCapture(); }
+  if ((e.key === "n" || e.key === "c") && !sheetOpen()) { e.preventDefault(); if (isPersonalFinance()) openMoneyCapture(state.route.a); else openCapture(); }
   if (e.key === "/" && !sheetOpen()) { e.preventDefault(); location.hash = "#/search"; }
   if ((e.key === "Enter" || e.key === " ") && document.activeElement.dataset && document.activeElement.dataset.act && document.activeElement.getAttribute("role") === "button") { e.preventDefault(); document.activeElement.click(); }
 });

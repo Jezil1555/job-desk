@@ -7,9 +7,10 @@ import { sb, run } from "../api.js";
 import { ICON, $, openSheet, closeSheet, rerenderSheet, sheetHead, toast, toastError, dialog, busy } from "../ui.js";
 import { safeFileName, fmtBytes } from "../insights.js";
 import { money, r2, parseStatementCSV } from "../finance.js";
-import { fin, loadFin, entityById, accById, partyById, accountsOf, moneyAccounts, sysAccount, canWriteFin, filesOf, uploadFinFile, saveJournal, uploadPartnerDoc,
-  moneyPost, importAdd, importRowUpdate, importDelete, importRowsOf, saveObligation, obligationFor, addBalanceCheck } from "../finapi.js";
-import { businessParties, suggest, businessAccountFor, kindNeeds, rowProblem, parseBankText, KIND_LABEL, KIND_ORDER, DEBT_KIND_LABEL, MONEY, ITEM_STATUS } from "../money.js";
+import { fin, loadFin, entityById, accById, partyById, accountsOf, moneyAccounts, sysAccount, canWriteFin, isFinOwner, filesOf, uploadFinFile, saveJournal, uploadPartnerDoc,
+  moneyPost, moneyLinkBusiness, importAdd, importRowUpdate, importDelete, importRowsOf, saveObligation, obligationFor, addBalanceCheck } from "../finapi.js";
+import { businessParties, suggest, businessAccountFor, kindNeeds, rowProblem, parseBankText, KIND_LABEL, KIND_ORDER, DEBT_KIND_LABEL, MONEY, ITEM_STATUS, CURRENCIES, toBase } from "../money.js";
+import { rates } from "../views/finance.js";
 import { moneyModel, groupName, debtKind, receivableItems } from "../views/money.js";
 
 const today = () => todayISO(state.tz);
@@ -32,6 +33,11 @@ const bizAccOptions = (entityId, kind, sel) => {
 };
 const accOpts = (eid, pred, sel, blank = "Choose…") => `<option value="">${blank}</option>` + accountsOf(eid, a => a.is_active && pred(a)).map(a => `<option value="${a.id}" ${a.id === sel ? "selected" : ""}>${esc(a.name)}</option>`).join("");
 const partyOpts = (eid, sel) => `<option value="">Choose…</option>` + fin.parties.filter(p => p.entity_id === eid && !p.archived).map(p => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("") + `<option value="__new">+ Someone new…</option>`;
+const accCcy = (id, base) => (accById(id) || {}).currency || base;
+const planned = (native, ccy, base) => toBase(native, ccy, rates(), base);
+const rateHint = (ccy, base) => { const k = rates()[ccy]; return k ? `your planning rate ${k} ${ccy} = 1 ${base}` : `no planning rate for ${ccy} yet (Finance → Change rates)`; };
+/** Businesses you own that aren't linked to these personal books yet. */
+const unlinkedBusinesses = eid => fin.entities.filter(x => x.kind === "business" && !x.archived && isFinOwner(x.id) && isFinOwner(eid) && !fin.plinks.some(k => k.entity_id === x.id && k.mirror_entity_id === eid));
 const defaultMoneyAcc = eid => (moneyAccounts(eid).find(a => a.subtype === "bank") || moneyAccounts(eid)[0] || {}).id || "";
 async function newParty(eid) {
   const name = await dialog({ title: "Who is it?", input: { label: "Name", required: true, placeholder: "e.g. Shahzoor, QNB" }, confirm: "Add" });
@@ -76,13 +82,13 @@ async function processRows(raw, { source, title, rawText, reader, file, aiPropos
   const cards = moneyAccounts(e.id).filter(a => a.subtype === "card");
   const rows = raw.map(r => {
     const acc = r.card_last4 && cards.find(c => c.name.includes(r.card_last4)) ? cards.find(c => c.name.includes(r.card_last4)).id : (r.account_id || cap.account_id);
-    const base = { txn_date: r.txn_date, amount: r2(r.amount), direction: r.direction, currency: r.currency || e.base_currency, description: (r.description || r.merchant || "Transaction").slice(0, 300), merchant: r.merchant || null, account_id: acc };
+    const base = { txn_date: r.txn_date, amount: r2(r.amount), direction: r.direction, currency: r.currency || accCcy(acc, e.base_currency), description: (r.description || r.merchant || "Transaction").slice(0, 300), merchant: r.merchant || null, account_id: acc };
     const hist = suggest({ ...base }, { accounts: accs, history, businesses: [], bizAccounts: {} });
     let s = hist.confidence === "high" && history.length ? hist : null; // your own history wins
     if (!s && r.kind) s = { kind: r.kind, category_account_id: r.category_account_id || null, for_entity_id: r.for_entity_id || null, business_account_id: r.business_account_id || null, confidence: r.confidence || "medium", review_reason: r.note || null };
     if (!s) s = suggest(base, { accounts: accs, history: [], businesses, bizAccounts });
     if (s.kind === "paid_for_business" && !s.business_account_id && s.for_entity_id) s.business_account_id = businessAccountFor(base.description + " " + (base.merchant || ""), bizAccounts[s.for_entity_id] || []);
-    const reasons = [s.review_reason, base.currency !== e.base_currency ? `Shown in ${base.currency} — enter the ${e.base_currency} amount that actually left or reached your account` : null, r.date_found === false ? "No date in the message — check it" : null].filter(Boolean);
+    const reasons = [s.review_reason, base.currency !== e.base_currency && accCcy(acc, e.base_currency) === e.base_currency ? `In ${base.currency} from your ${e.base_currency} account — put in the ${e.base_currency} that actually left or arrived` : null, r.date_found === false ? "No date in the message — check it" : null].filter(Boolean);
     return { ...base, ...s, confidence: reasons.length && s.confidence === "high" ? "medium" : s.confidence, review_reason: reasons.join(" · ").slice(0, 300) || null, raw: r.raw ? { text: String(r.raw).slice(0, 500) } : null };
   });
   const res = await importAdd(e.id, source, title, rawText, cap.account_id, reader, rows);
@@ -177,33 +183,57 @@ export function openManual(eid, preset = {}) {
   const e = entityById(eid); if (!e) return;
   const bz = linkedBusinesses(eid);
   const a = preset.fromAi || {};
-  mf = { eid, kind: preset.kind || a.kind || "spend", txn_date: a.txn_date || today(), amount: a.amount || "", account_id: preset.account_id || defaultMoneyAcc(eid), category_account_id: preset.category_account_id || a.category_account_id || "",
+  const foreign = a.currency && a.currency !== e.base_currency;
+  mf = { eid, kind: preset.kind || a.kind || "spend", txn_date: a.txn_date || today(), amount: foreign ? "" : (a.amount || ""), native: foreign ? a.amount : "", baseTouched: false,
+    account_id: preset.account_id || defaultMoneyAcc(eid), category_account_id: preset.category_account_id || a.category_account_id || "",
     party_id: preset.party_id || "", for_entity_id: preset.for_entity_id || a.for_entity_id || (bz[0] || {}).entity_id || "", business_account_id: preset.business_account_id || a.business_account_id || "", interest: "",
-    description: preset.description || a.description || "", merchant: a.merchant || "", reference: "", file: preset.file || null, note: preset.note || (preset.fromAi ? "Read from the photo — check the details before saving." : null), currency: a.currency || e.base_currency };
+    description: preset.description || a.description || "", merchant: a.merchant || "", reference: "", file: preset.file || null, note: preset.note || (preset.fromAi ? "Read from the photo — check the details before saving." : null),
+    currency: a.currency || e.base_currency, toNative: "", bizAmount: "" };
+  if (foreign && mf.native) mf.amount = planned(mf.native, mf.currency, e.base_currency) ?? "";
   if (mf.kind === "paid_for_business" && !mf.business_account_id && mf.for_entity_id) mf.business_account_id = businessAccountFor(mf.description + " " + mf.merchant, accountsOf(mf.for_entity_id)) || "";
   if (!mf.category_account_id && !kindNeeds(mf.kind).business) mf.category_account_id = suggest({ description: mf.description, merchant: mf.merchant, direction: IN_KINDS.includes(mf.kind) && mf.kind !== "transfer" ? "in" : "out" }, { accounts: accountsOf(eid) }).category_account_id || "";
   openSheet(sh => renderManual(sh));
 }
+/** What the currency fields look like for the current form state. */
+function manualCcy(e) {
+  const base = e.base_currency, ac = accCcy(mf.account_id, base);
+  if (ac !== base) mf.currency = ac;
+  const foreign = mf.currency !== base;
+  const cat = accById(mf.category_account_id), catCcy = cat ? (cat.currency || base) : base;
+  const toForeign = mf.kind === "transfer" && cat && catCcy !== mf.currency && catCcy !== base;
+  const bizE = kindNeeds(mf.kind).business && entityById(mf.for_entity_id), bc = bizE ? bizE.base_currency : base;
+  const needBiz = !!bizE && bc !== base && bc !== mf.currency;
+  return { base, ac, foreign, lockCcy: ac !== base, cat, catCcy, toForeign, bc, needBiz, fromBaseAcc: ac === base };
+}
 function renderManual(sh) {
-  const e = entityById(mf.eid), n = kindNeeds(mf.kind), bz = linkedBusinesses(mf.eid);
+  const e = entityById(mf.eid), n = kindNeeds(mf.kind), bz = linkedBusinesses(mf.eid), cx = manualCcy(e), unlinked = n.business ? unlinkedBusinesses(mf.eid) : [];
   const moneyOpts = moneyAccounts(mf.eid).filter(a => n.moneyCard || a.subtype !== "card");
-  sh.innerHTML = sheetHead("Enter it myself", `${esc(e.name)} · ${e.base_currency}`) + `<form id="mnManual" class="sh-body" novalidate>
+  const ccyOpts = [...new Set([cx.base, ...Object.keys(rates()).filter(k => k !== "base"), ...CURRENCIES])];
+  const baseLabel = mf.kind === "transfer" && cx.foreign && cx.catCcy === cx.base ? `${cx.base} received` : cx.fromBaseAcc ? `${cx.base} that left your account` : `${cx.base} equivalent`;
+  sh.innerHTML = sheetHead("Enter it myself", `${esc(e.name)} · reports in ${e.base_currency}`) + `<form id="mnManual" class="sh-body" novalidate>
     ${mf.note ? `<div class="banner info">${esc(mf.note)}</div>` : ""}
     <div class="mn-kinds-pick" role="radiogroup">${KIND_ORDER.map(k => `<button type="button" class="chip-btn ${mf.kind === k ? "on" : ""}" data-act="mn-kind" data-kind="${k}">${KIND_ICON[k]} ${KIND_LABEL[k]}</button>`).join("")}</div>
-    <div class="grid2"><label class="field"><span>Amount (${e.base_currency})</span><input class="input num mn-bigamt" type="number" step="0.01" min="0.01" inputmode="decimal" id="mm-amount" value="${esc(mf.amount)}" ${mf.amount ? "" : "autofocus"}></label>
+    <div class="mn-amtrow">
+      <label class="field mn-ccy"><span>Currency</span><select class="input" id="mm-ccy" ${cx.lockCcy ? "disabled" : ""}>${ccyOpts.map(c => `<option ${c === mf.currency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      ${cx.foreign ? `<label class="field"><span>Amount (${mf.currency})</span><input class="input num mn-bigamt" type="number" step="0.01" min="0.01" inputmode="decimal" id="mm-native" value="${esc(mf.native)}" ${mf.native ? "" : "autofocus"}></label>`
+        : `<label class="field"><span>Amount (${cx.base})</span><input class="input num mn-bigamt" type="number" step="0.01" min="0.01" inputmode="decimal" id="mm-amount" value="${esc(mf.amount)}" ${mf.amount ? "" : "autofocus"}></label>`}
       <label class="field"><span>Date</span><input class="input" type="date" id="mm-date" value="${esc(mf.txn_date)}"></label></div>
-    ${mf.currency !== e.base_currency ? `<p class="hint bad-text">The receipt is in ${esc(mf.currency)}. Enter the ${e.base_currency} amount that actually left your account.</p>` : ""}
+    ${cx.foreign ? `<label class="field"><span>${baseLabel}</span><input class="input num" type="number" step="0.01" min="0.01" inputmode="decimal" id="mm-amount" value="${esc(mf.amount)}"></label>
+      <p class="hint" id="mm-ratehint">${mf.baseTouched ? `Using your figure (rate ${mf.native && mf.amount ? (Number(mf.native) / Number(mf.amount)).toFixed(4) : "—"}).` : `Filled from ${rateHint(mf.currency, cx.base)}${cx.fromBaseAcc ? " — change it to what your bank actually took" : ""}.`}</p>` : ""}
+    ${cx.toForeign ? `<label class="field"><span>Arrived in ${esc(cx.cat.name)} (${cx.catCcy})</span><input class="input num" type="number" step="0.01" min="0.01" id="mm-tonative" value="${esc(mf.toNative)}"></label>` : ""}
     <label class="field"><span>${mf.kind === "paid_for_business" ? "What was it?" : "Description"}</span><input class="input" id="mm-desc" value="${esc(mf.description)}" placeholder="${mf.kind === "paid_for_business" ? "e.g. Topaz fabric 10 m" : mf.kind === "income" ? "e.g. November salary" : "e.g. Weekly shopping"}"></label>
     <div class="grid2">
-      <label class="field"><span>${n.money}</span><select class="input" id="mm-acc">${moneyOpts.map(a => `<option value="${a.id}" ${a.id === mf.account_id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
-      ${n.business ? `<label class="field"><span>Business</span><select class="input" id="mm-biz">${bz.length ? bz.map(b => `<option value="${b.entity_id}" ${b.entity_id === mf.for_entity_id ? "selected" : ""}>${esc(b.name)}</option>`).join("") : `<option value="">No linked business</option>`}</select></label>`
+      <label class="field"><span>${n.money}</span><select class="input" id="mm-acc">${moneyOpts.map(a => `<option value="${a.id}" ${a.id === mf.account_id ? "selected" : ""}>${esc(a.name)}${a.currency ? ` (${a.currency})` : ""}</option>`).join("")}</select></label>
+      ${n.business ? `<label class="field"><span>Business</span><select class="input" id="mm-biz">${bz.length ? bz.map(b => `<option value="${b.entity_id}" ${b.entity_id === mf.for_entity_id ? "selected" : ""}>${esc(b.name)} (${(entityById(b.entity_id) || {}).base_currency})</option>`).join("") : `<option value="">No linked business</option>`}</select></label>`
         : `<label class="field"><span>${n.category}</span><select class="input" id="mm-cat">${accOpts(mf.eid, n.catFilter, mf.category_account_id)}</select></label>`}
     </div>
+    ${n.business && unlinked.length ? `<div class="btnrow">${unlinked.map(b => `<button type="button" class="btn sm" data-act="mn-link-biz" data-biz="${b.id}">${ICON.link}Link ${esc(b.name)} (${b.base_currency})</button>`).join("")}</div>` : ""}
+    ${cx.needBiz ? `<label class="field"><span>Amount in ${cx.bc} <small>(as ${esc((entityById(mf.for_entity_id) || {}).name)} records it)</small></span><input class="input num" type="number" step="0.01" min="0.01" id="mm-bizamt" value="${esc(mf.bizAmount)}"></label>` : ""}
     ${n.business ? (bz.length ? `<label class="field"><span>${n.bizLabel}</span><select class="input" id="mm-bizacc">${bizAccOptions(mf.for_entity_id, mf.kind, mf.business_account_id)}</select></label>
-        <p class="hint">${mf.kind === "paid_for_business" ? `Your money goes down, ${esc((entityById(mf.for_entity_id) || {}).name || "the business")} owes you more, and it's booked in the business's own books too. It isn't counted as your spending.` : "Money owed to you goes down in both books. It isn't income."}</p>`
-      : `<p class="hint bad-text">No business is linked to these books yet. Set up the partner account in the business's books (Finance → the business → Partner accounts) first.</p>`) : ""}
+        <p class="hint">${mf.kind === "paid_for_business" ? `Your money goes down, ${esc((entityById(mf.for_entity_id) || {}).name || "the business")} owes you more, and it's booked in the business's own books too. It isn't counted as your spending.` : "Money owed to you goes down in both books. It isn't income."}${cx.bc !== cx.base ? ` The business keeps ${cx.bc}; your books keep ${cx.base} — any exchange difference is cleared when it's fully repaid.` : ""}</p>`
+      : `<p class="hint bad-text">No business is linked to these books yet${unlinked.length ? " — link one above." : ". Set up the partner account in the business's books first."}</p>`) : ""}
     ${n.party ? `<label class="field"><span>${n.party}${["lent", "repayment_in"].includes(mf.kind) ? "" : " <small>(optional)</small>"}</span><select class="input" id="mm-party">${partyOpts(mf.eid, mf.party_id)}</select></label>` : ""}
-    ${n.interest ? `<label class="field"><span>Of which interest <small>(if you know it)</small></span><input class="input num" type="number" step="0.01" min="0" id="mm-int" value="${esc(mf.interest)}"></label>` : ""}
+    ${n.interest ? `<label class="field"><span>Of which interest in ${cx.base} <small>(if you know it)</small></span><input class="input num" type="number" step="0.01" min="0" id="mm-int" value="${esc(mf.interest)}"></label>` : ""}
     <div class="grid2"><label class="field"><span>Shop / paid to <small>(optional)</small></span><input class="input" id="mm-merchant" value="${esc(mf.merchant)}"></label>
       <label class="field"><span>Reference <small>(optional)</small></span><input class="input" id="mm-ref" value="${esc(mf.reference)}" placeholder="Invoice / receipt no."></label></div>
     <div class="field"><span>Receipt or invoice <small>(optional)</small></span><div class="btnrow">
@@ -215,6 +245,10 @@ function renderManual(sh) {
 function syncManual() {
   if (!mf || !$("mnManual")) return;
   mf.amount = val("mm-amount"); mf.txn_date = val("mm-date"); mf.description = val("mm-desc"); mf.account_id = val("mm-acc"); mf.merchant = val("mm-merchant"); mf.reference = val("mm-ref");
+  if ($("mm-ccy") && !$("mm-ccy").disabled) mf.currency = val("mm-ccy");
+  if ($("mm-native")) mf.native = val("mm-native");
+  if ($("mm-tonative")) mf.toNative = val("mm-tonative");
+  if ($("mm-bizamt")) mf.bizAmount = val("mm-bizamt");
   if ($("mm-cat")) mf.category_account_id = val("mm-cat");
   if ($("mm-biz")) mf.for_entity_id = val("mm-biz");
   if ($("mm-bizacc")) mf.business_account_id = val("mm-bizacc");
@@ -223,11 +257,18 @@ function syncManual() {
 }
 async function submitManual(form) {
   syncManual();
-  const e = entityById(mf.eid);
+  const e = entityById(mf.eid), cx = manualCcy(e);
   const p = { entity_id: e.id, kind: mf.kind, txn_date: mf.txn_date, amount: Number(mf.amount), account_id: mf.account_id, category_account_id: mf.category_account_id || null, party_id: mf.party_id || null,
     for_entity_id: kindNeeds(mf.kind).business ? mf.for_entity_id : null, business_account_id: kindNeeds(mf.kind).business ? mf.business_account_id : null, interest: mf.interest ? Number(mf.interest) : null,
     description: mf.description || mf.merchant, merchant: mf.merchant || null, reference: mf.reference || null };
-  const prob = rowProblem(p);
+  if (cx.foreign) {
+    if (!(Number(mf.native) > 0)) return toastError(`Enter the ${mf.currency} amount.`);
+    if (!(Number(mf.amount) > 0)) return toastError(`Enter the ${cx.base} amount too — ${rateHint(mf.currency, cx.base)}.`);
+    Object.assign(p, { currency: mf.currency, fx_amount: Number(mf.native), rate_source: mf.baseTouched ? (cx.fromBaseAcc ? "actual" : "entered") : "planning" });
+  }
+  if (cx.toForeign) { if (!(Number(mf.toNative) > 0)) return toastError(`Enter how much arrived in ${cx.catCcy}.`); p.to_fx_amount = Number(mf.toNative); }
+  if (cx.needBiz) { if (!(Number(mf.bizAmount) > 0)) return toastError(`Enter the ${cx.bc} amount the business records.`); p.business_amount = Number(mf.bizAmount); }
+  const prob = rowProblem({ ...p, amount: cx.foreign ? mf.native : p.amount, base_amount: p.amount }, cx.base);
   if (prob) return toastError(prob);
   const btn = $("mmSave"); busy(btn, true);
   const r = await moneyPost(p);
@@ -236,7 +277,7 @@ async function submitManual(form) {
   busy(btn, false);
   const label = KIND_LABEL[mf.kind], kind = mf.kind;
   await refresh(); closeSheet();
-  toast(`Saved: ${label} ${money(p.amount, e.base_currency)}${kind === "paid_for_business" ? " — added to what the business owes you" : ""}`);
+  toast(`Saved: ${label} ${cx.foreign ? money(p.fx_amount, p.currency) + " (" + money(p.amount, e.base_currency) + ")" : money(p.amount, e.base_currency)}${kind === "paid_for_business" ? " — added to what the business owes you" : ""}`);
 }
 async function attachAfterPost(file, eid, res, kind) {
   let u;
@@ -250,7 +291,9 @@ async function attachAfterPost(file, eid, res, kind) {
 export function openReview(importId) {
   const imp = fin.imports.find(i => i.id === importId); if (!imp) return toastError("That import is no longer there.");
   const rows = importRowsOf(importId);
-  rv = { importId, eid: imp.entity_id, sel: new Set(rows.filter(r => r.status === "pending" && !r.duplicate && !rowProblem(r)).map(r => r.id)), results: {} };
+  const base = (entityById(imp.entity_id) || {}).base_currency;
+  rows.forEach(r => withBase(r, base));
+  rv = { importId, eid: imp.entity_id, sel: new Set(rows.filter(r => r.status === "pending" && !r.duplicate && !rowProblem(r, base)).map(r => r.id)), results: {} };
   openSheet(sh => renderReview(sh), { wide: true });
 }
 function renderReview(sh) {
@@ -272,8 +315,15 @@ function renderReview(sh) {
       <div class="tside"><b class="num mn-amt ${r.direction}">${r.direction === "in" ? "+" : "−"}${money(r.amount, e.base_currency)}</b>${r.status === "skipped" ? `<button class="btn sm" data-act="mn-rv-unskip" data-id="${r.id}">Restore</button>` : ""}</div></div>`).join("")}</div></details>` : ""}
   </div>`;
 }
+/** Foreign lines get a planning-rate base amount to start with (shown, flagged, editable); nothing is saved until changed or posted. */
+function withBase(r, base) {
+  if (r.currency && r.currency !== base && r.base_amount == null && r.status === "pending") { const b = planned(r.amount, r.currency, base); if (b) { r.base_amount = b; r.rate_source = r.rate_source || "planning"; r._planned = true; } }
+  return r;
+}
 function reviewRow(e, r) {
-  const n = kindNeeds(r.kind), kinds = r.direction === "in" ? IN_KINDS : OUT_KINDS, bz = linkedBusinesses(e.id), prob = rowProblem(r), err = rv.results[r.id];
+  withBase(r, e.base_currency);
+  const n = kindNeeds(r.kind), kinds = r.direction === "in" ? IN_KINDS : OUT_KINDS, bz = linkedBusinesses(e.id), prob = rowProblem(r, e.base_currency), err = rv.results[r.id];
+  const foreign = r.currency && r.currency !== e.base_currency, bizE = n.business && entityById(r.for_entity_id), needBiz = bizE && bizE.base_currency !== e.base_currency && bizE.base_currency !== r.currency;
   const dupLine = r.duplicate_line_id && fin.lines.find(l => l.id === r.duplicate_line_id), dupJ = dupLine && fin.journals.find(j => j.id === dupLine.journal_id);
   const f = (field, html) => `<label class="field sm"><span>${field}</span>${html}</label>`;
   const sel = (id, opts) => `<select class="input sm" data-rv="${id}" data-row="${r.id}">${opts}</select>`;
@@ -294,7 +344,9 @@ function reviewRow(e, r) {
         ${n.interest ? f("Interest", `<input class="input sm num" type="number" step="0.01" min="0" data-rv="interest" data-row="${r.id}" value="${r.interest ?? ""}">`) : ""}
         ${f(r.direction === "in" ? "Into" : "From", sel("account_id", accOpts(e.id, a => MONEY.has(a.subtype), r.account_id)))}
         ${f("Date", `<input class="input sm" type="date" data-rv="txn_date" data-row="${r.id}" value="${r.txn_date || ""}">`)}
-        ${f(`Amount (${e.base_currency})`, `<input class="input sm num" type="number" step="0.01" min="0.01" data-rv="amount" data-row="${r.id}" value="${r.amount}">`)}
+        ${f(`Amount (${r.currency || e.base_currency})`, `<input class="input sm num" type="number" step="0.01" min="0.01" data-rv="amount" data-row="${r.id}" value="${r.amount}">`)}
+        ${foreign ? f(`${e.base_currency} ${accCcy(r.account_id, e.base_currency) === e.base_currency ? "that left / arrived" : "equivalent"}${r.rate_source === "planning" ? " · planning rate" : ""}`, `<input class="input sm num" type="number" step="0.01" min="0.01" data-rv="base_amount" data-row="${r.id}" value="${r.base_amount ?? ""}">`) : ""}
+        ${needBiz ? f(`Amount in ${bizE.base_currency} (business)`, `<input class="input sm num" type="number" step="0.01" min="0.01" data-rv="_bizamt" data-row="${r.id}" value="${r._bizamt ?? ""}">`) : ""}
       </div>
       ${prob ? `<p class="hint">Still needed: ${esc(prob)}</p>` : ""}
     </div></div>`;
@@ -303,8 +355,11 @@ async function reviewField(el) {
   const r = fin.importRows.find(x => x.id === el.dataset.row); if (!r) return;
   let v = el.value, field = el.dataset.rv;
   if (field === "party_id" && v === "__new") { v = await newParty(rv.eid); if (!v) { rerenderSheet(); return; } }
-  const patch = { [field]: v === "" ? null : (["amount", "interest"].includes(field) ? Number(v) : v) };
-  if (field === "amount") patch.currency = entityById(rv.eid).base_currency; // an edited amount is in the books' currency
+  if (field === "_bizamt") { r._bizamt = Number(v) || null; rerenderSheet(); return; } // used when posting only
+  const patch = { [field]: v === "" ? null : (["amount", "interest", "base_amount"].includes(field) ? Number(v) : v) };
+  const base = entityById(rv.eid).base_currency;
+  if (field === "base_amount") { patch.rate_source = accCcy(r.account_id, base) === base ? "actual" : "entered"; delete r._planned; }
+  if (field === "amount" && r.currency && r.currency !== base && (r._planned || r.rate_source === "planning")) { patch.base_amount = planned(Number(v), r.currency, base); patch.rate_source = "planning"; }
   if (field === "kind") { patch.category_account_id = null; patch.for_entity_id = null; patch.business_account_id = null;
     const e = entityById(rv.eid), s = suggest({ ...r, kind: v }, { accounts: accountsOf(e.id) });
     if (v === r.kind) delete patch.category_account_id;
@@ -313,22 +368,24 @@ async function reviewField(el) {
     else if (v === "transfer") patch.category_account_id = null; }
   if (field === "for_entity_id" && v) patch.business_account_id = r.kind === "paid_for_business" ? businessAccountFor(r.description + " " + (r.merchant || ""), accountsOf(v)) : (accountsOf(v, a => a.subtype === "bank")[0] || {}).id || null;
   Object.assign(r, patch); delete rv.results[r.id];
-  if (!rowProblem(r) && !r.duplicate) rv.sel.add(r.id);
+  if (!rowProblem(r, base) && !r.duplicate) rv.sel.add(r.id);
   rerenderSheet();
   const u = await importRowUpdate(r.id, patch);
   if (u.error) toastError(u.error);
 }
 async function postSelected(btn) {
   const e = entityById(rv.eid), rows = importRowsOf(rv.importId).filter(r => r.status === "pending" && rv.sel.has(r.id));
-  const blocked = rows.filter(r => rowProblem(r));
-  if (blocked.length) { blocked.forEach(r => rv.results[r.id] = rowProblem(r)); rerenderSheet(); return toastError(`${blocked.length} line${blocked.length > 1 ? "s need" : " needs"} more detail first.`); }
+  const blocked = rows.filter(r => rowProblem(r, e.base_currency));
+  if (blocked.length) { blocked.forEach(r => rv.results[r.id] = rowProblem(r, e.base_currency)); rerenderSheet(); return toastError(`${blocked.length} line${blocked.length > 1 ? "s need" : " needs"} more detail first.`); }
   busy(btn, true, `Saving 0 of ${rows.length}…`);
   let ok = 0;
   for (const r of rows) {
     // money that came in on a transfer: the other account is where it came from
     const swap = r.kind === "transfer" && r.direction === "in";
-    const p = { entity_id: e.id, kind: r.kind, txn_date: r.txn_date, amount: Number(r.amount), account_id: swap ? r.category_account_id : r.account_id, category_account_id: swap ? r.account_id : r.category_account_id,
-      party_id: r.party_id, for_entity_id: r.for_entity_id, business_account_id: r.business_account_id, interest: r.interest, description: r.description, merchant: r.merchant, currency: r.currency, import_row_id: r.id };
+    const foreign = r.currency && r.currency !== e.base_currency;
+    const p = { entity_id: e.id, kind: r.kind, txn_date: r.txn_date, amount: Number(foreign ? r.base_amount : r.amount), account_id: swap ? r.category_account_id : r.account_id, category_account_id: swap ? r.account_id : r.category_account_id,
+      party_id: r.party_id, for_entity_id: r.for_entity_id, business_account_id: r.business_account_id, interest: r.interest, description: r.description, merchant: r.merchant, import_row_id: r.id,
+      currency: foreign ? r.currency : null, fx_amount: foreign ? Number(r.amount) : null, rate_source: foreign ? (r.rate_source || "planning") : null, business_amount: r._bizamt || null };
     const res = await moneyPost(p);
     if (res.error) rv.results[r.id] = String(res.error.message || res.error).replace(/^[a-z_]+: /, ""); else { ok++; rv.sel.delete(r.id); }
     btn.textContent = `Saving ${ok} of ${rows.length}…`;
@@ -493,11 +550,60 @@ async function submitExisting(form) {
   busy(btn, false); await refresh(); closeSheet(); toast("Saved");
 }
 
+/* ======================= add an account (any currency) ======================= */
+const ACC_TYPES = { bank: ["Bank account", "asset", "bank", 1030], cash: ["Cash", "asset", "cash", 1001], card: ["Credit card", "liability", "card", 2110], earmarked: ["Savings pot", "asset", "earmarked", 1410],
+  investment: ["Investment", "asset", "investment", 1310], loan: ["Loan", "liability", "loan", 2260] };
+function openNewAccount(eid) {
+  const e = entityById(eid), ccys = [...new Set([e.base_currency, ...Object.keys(rates()).filter(k => k !== "base"), ...CURRENCIES])];
+  det = { eid, side: "new_account" };
+  openSheet(sh => { sh.innerHTML = sheetHead("Add an account", `${esc(e.name)} · e.g. Indian bank (INR), Bahrain cash (BHD), a second QAR card`) + `<form id="mnNewAcc" class="sh-body" novalidate>
+    <label class="field"><span>Name</span><input class="input" id="na-name" placeholder="e.g. Federal Bank NRO" autofocus></label>
+    <div class="grid2"><label class="field"><span>Type</span><select class="input" id="na-type">${Object.entries(ACC_TYPES).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join("")}</select></label>
+      <label class="field"><span>Currency</span><select class="input" id="na-ccy">${ccys.map(c => `<option ${c === e.base_currency ? "selected" : ""}>${c}</option>`).join("")}</select></label></div>
+    <h3 class="mn-h3">Balance today <small class="hint">(optional)</small></h3>
+    <div class="grid2"><label class="field"><span id="na-ballbl">Balance (${e.base_currency})</span><input class="input num" type="number" step="0.01" min="0" id="na-bal"></label>
+      <label class="field"><span>As of</span><input class="input" type="date" id="na-date" value="${today()}"></label></div>
+    <label class="field" id="na-basewrap" hidden><span>${e.base_currency} equivalent</span><input class="input num" type="number" step="0.01" min="0" id="na-base"><small class="hint" id="na-hint"></small></label>
+    <p class="hint">The account keeps its own currency, so its balance is always exact in that currency; your reports show it in ${e.base_currency}. Card and loan balances are what you owe.</p>
+    <div class="sheet-foot"><button class="btn primary block" type="submit" id="naSave">Add account</button></div></form>`; });
+}
+async function submitNewAccount() {
+  const e = entityById(det.eid), name = val("na-name"), t = ACC_TYPES[val("na-type")], ccy = val("na-ccy"), bal = Number(val("na-bal") || 0), baseAmt = Number(val("na-base") || 0);
+  if (!name) return toastError("Give the account a name.");
+  const foreign = ccy !== e.base_currency;
+  if (bal > 0 && foreign && !(baseAmt > 0)) return toastError(`Enter the ${e.base_currency} equivalent — ${rateHint(ccy, e.base_currency)}.`);
+  const used = new Set(accountsOf(e.id).map(a => a.code)); let code = t[3]; while (used.has(String(code))) code++;
+  const btn = $("naSave"); busy(btn, true);
+  const r = await run(sb.from("fin_accounts").insert({ entity_id: e.id, code: String(code), name, type: t[1], subtype: t[2], currency: foreign ? ccy : null }).select().single());
+  if (r.error) { busy(btn, false); return toastError(r.error); }
+  fin.accounts.push(r.data);
+  if (bal > 0) {
+    const p = await moneyPost({ entity_id: e.id, kind: "opening", txn_date: val("na-date") || today(), account_id: r.data.id, amount: foreign ? baseAmt : bal, currency: foreign ? ccy : null, fx_amount: foreign ? bal : null,
+      rate_source: foreign ? ($("na-base").dataset.touched ? "entered" : "planning") : null, description: `${name} opening balance` });
+    if (p.error) { busy(btn, false); await refresh(); return toastError("Account added, but the balance wasn't saved: " + (p.error.message || p.error)); }
+  }
+  busy(btn, false); await refresh(); closeSheet(); toast(`${name} added`);
+}
+
+/* ======================= budgets in any currency ======================= */
+export async function saveBudgets(eid, month, rows) {
+  const e = entityById(eid), up = [], del = [];
+  for (const x of rows) {
+    if (!(x.native > 0)) { del.push(x.account_id); continue; }
+    const amount = x.ccy === e.base_currency ? r2(x.native) : planned(x.native, x.ccy, e.base_currency);
+    if (amount === null) return { error: `No planning rate for ${x.ccy} — add it under Finance → Change rates first.` };
+    up.push({ entity_id: eid, account_id: x.account_id, month, amount, native_currency: x.ccy === e.base_currency ? null : x.ccy, native_amount: x.ccy === e.base_currency ? null : r2(x.native) });
+  }
+  if (up.length) { const r = await run(sb.from("fin_budgets").upsert(up, { onConflict: "account_id,month" })); if (r.error) return r; }
+  if (del.length) { const r = await run(sb.from("fin_budgets").delete().eq("month", month).in("account_id", del)); if (r.error) return r; }
+  return { data: true };
+}
+
 /* ======================= what the bank shows ======================= */
 function openBalanceCheck(eid, accId) {
   const a = accById(accId), e = entityById(eid), card = a.subtype === "card";
   openSheet(sh => { sh.innerHTML = sheetHead(card ? "Card statement balance" : "What the bank shows", `${esc(a.name)} · kept apart from your books, so differences show up`) + `<form id="mnBalCheck" class="sh-body" data-acc="${accId}" data-entity="${eid}" novalidate>
-    <div class="grid2"><label class="field"><span>${card ? "Amount owed on the card" : "Balance in the bank app"} (${e.base_currency})</span><input class="input num" type="number" step="0.01" id="bc-bal" autofocus></label>
+    <div class="grid2"><label class="field"><span>${card ? "Amount owed on the card" : "Balance in the bank app"} (${a.currency || e.base_currency})</span><input class="input num" type="number" step="0.01" id="bc-bal" autofocus></label>
       <label class="field"><span>On</span><input class="input" type="date" id="bc-date" value="${today()}"></label></div>
     <label class="field"><span>Note <small>(optional)</small></span><input class="input" id="bc-note"></label>
     <p class="hint">Nothing in your books changes. If the numbers differ, something is missing — upload the statement with Capture to find it.</p>
@@ -519,6 +625,9 @@ export async function handleMoneyClick(act, el, rerender) {
       else mf.category_account_id = suggest({ description: mf.description, merchant: mf.merchant, direction: IN_KINDS.includes(mf.kind) && mf.kind !== "transfer" ? "in" : "out" }, { accounts: accountsOf(mf.eid) }).kind === mf.kind ? suggest({ description: mf.description, merchant: mf.merchant, direction: IN_KINDS.includes(mf.kind) && mf.kind !== "transfer" ? "in" : "out" }, { accounts: accountsOf(mf.eid) }).category_account_id || "" : "";
       if (!kindNeeds(mf.kind).moneyCard && (accById(mf.account_id) || {}).subtype === "card") mf.account_id = defaultMoneyAcc(mf.eid);
       rerenderSheet(); return true;
+    case "mn-link-biz": { const r = await moneyLinkBusiness(mf ? mf.eid : eid, el.dataset.biz); if (r.error) return toastError(r.error), true;
+      await refresh(); syncManual(); if (mf) { mf.for_entity_id = el.dataset.biz; mf.business_account_id = mf.kind === "paid_for_business" ? businessAccountFor(mf.description + " " + mf.merchant, accountsOf(el.dataset.biz)) || "" : (accountsOf(el.dataset.biz, a => a.subtype === "bank")[0] || {}).id || ""; }
+      rerenderSheet(); toast(`${(entityById(el.dataset.biz) || {}).name} linked to your personal books`); return true; }
     case "mn-unfile": syncManual(); mf.file = null; rerenderSheet(); return true;
     case "mn-review": openReview(el.dataset.id); return true;
     case "mn-rv-sel": if (el.checked) rv.sel.add(el.dataset.id); else rv.sel.delete(el.dataset.id); rerenderSheet(); return true;
@@ -544,6 +653,14 @@ export async function handleMoneyClick(act, el, rerender) {
       return true; }
     case "mn-add-existing": openAddExisting(eid, el.dataset.side); return true;
     case "mn-balcheck": openBalanceCheck(eid, el.dataset.acc); return true;
+    case "mn-new-account": openNewAccount(eid); return true;
+    case "mn-budget-save": { const f = $("mnBudget"); if (!f) return true; const rows = [...f.querySelectorAll("[data-bacc]")].map(tr => ({ account_id: tr.dataset.bacc, ccy: tr.querySelector("select").value, native: Number(tr.querySelector("input").value || 0) }));
+      busy(el, true); const r = await saveBudgets(eid, f.dataset.month, rows); busy(el, false); if (r.error) return toastError(r.error), true; await refresh(); rerender(); toast("Budget saved"); return true; }
+    case "mn-budget-copy": { const m = el.dataset.month, src = fin.budgets.filter(b => b.entity_id === eid && b.month === m); if (!src.length) return toastError("Save this month's budget first."), true;
+      const [y, mo] = m.split("-").map(Number), rows = [];
+      for (let k = mo + 1; k <= 12; k++) { const mm = `${y}-${String(k).padStart(2, "0")}-01`; src.forEach(b => rows.push({ entity_id: eid, account_id: b.account_id, month: mm, amount: b.amount, native_currency: b.native_currency, native_amount: b.native_amount })); }
+      if (!rows.length) return toast("Nothing left in this year to copy to."), true;
+      const r = await run(sb.from("fin_budgets").upsert(rows, { onConflict: "account_id,month" })); if (r.error) return toastError(r.error), true; await refresh(); rerender(); toast("Copied to the rest of the year"); return true; }
   }
   return false;
 }
@@ -551,6 +668,8 @@ const personalBooksId = () => (fin.entities.find(e => e.kind === "personal" && !
 export async function handleMoneyChange(ev, rerender) {
   const t = ev.target, id = t.id;
   if (id === "mn-cap-acc") { cap.account_id = t.value; return true; }
+  if (id === "na-ccy") { const e = entityById(det.eid), f = t.value !== e.base_currency; $("na-basewrap").hidden = !f; $("na-ballbl").textContent = `Balance (${t.value})`; $("na-hint").textContent = f ? `Filled from ${rateHint(t.value, e.base_currency)}.` : "";
+    if (f && val("na-bal")) $("na-base").value = planned(val("na-bal"), t.value, e.base_currency) ?? ""; return true; }
   if (id === "mn-photo" || id === "mn-file") { const f = t.files[0]; if (f) { cap.working = "Reading…"; rerenderSheet(); await readFile(f, id === "mn-photo"); } return true; }
   if (id === "mm-photo" || id === "mm-file") { syncManual(); mf.file = t.files[0] || mf.file; rerenderSheet(); return true; }
   if (id === "mm-party" && t.value === "__new") { syncManual(); const p = await newParty(mf.eid); mf.party_id = p || ""; rerenderSheet(); return true; }
@@ -565,17 +684,22 @@ export async function handleMoneyChange(ev, rerender) {
   if (t.dataset && t.dataset.act === "mn-attach-obl") { const f = t.files[0]; if (!f) return true; const o = fin.obligations.find(x => x.id === t.dataset.id); toast(`Uploading ${f.name}…`);
     const u = await uploadFinFile(f, o.entity_id, { obligation_id: o.id }, safeFileName); if (u.error) return toastError(u.error), true; rerenderSheet(); toast("Document attached"); return true; }
   if (id === "mm-bizacc") { mf.bizPicked = true; syncManual(); return true; }
-  if (["mm-acc", "mm-cat", "mm-date", "mm-amount"].includes(id)) { syncManual(); return true; }
+  if (["mm-acc", "mm-cat", "mm-ccy"].includes(id)) { syncManual(); if (id !== "mm-cat" || mf.kind === "transfer") { if (id === "mm-ccy") { mf.native = ""; mf.amount = ""; mf.baseTouched = false; } rerenderSheet(); } return true; }
+  if (["mm-date", "mm-amount", "mm-native", "mm-tonative", "mm-bizamt"].includes(id)) { syncManual(); return true; }
   return false;
 }
 export function handleMoneyInput(ev, keepFocus) {
   const t = ev.target;
+  if (t.id === "na-bal" && $("na-basewrap") && !$("na-basewrap").hidden && !$("na-base").dataset.touched) { const e = entityById(det.eid); $("na-base").value = planned(t.value, val("na-ccy"), e.base_currency) ?? ""; return true; }
+  if (t.id === "na-base") { t.dataset.touched = "1"; return true; }
   if (t.id === "mn-q") { (state.ui.money = state.ui.money || {}).q = t.value; keepFocus("mn-q"); return true; }
+  if (t.id === "mm-native" && mf && !mf.baseTouched && $("mm-amount")) { const e = entityById(mf.eid), b = planned(t.value, mf.currency, e.base_currency); $("mm-amount").value = b ?? ""; return true; }
+  if (t.id === "mm-amount" && mf && $("mm-native")) { mf.baseTouched = true; const h = $("mm-ratehint"); if (h && Number(t.value) > 0 && Number(val("mm-native")) > 0) h.textContent = `Using your figure (rate ${(Number(val("mm-native")) / Number(t.value)).toFixed(4)}).`; return true; }
   if (t.id === "mm-desc" || t.id === "mm-merchant") {
     if (mf && mf.kind === "paid_for_business" && $("mm-bizacc") && (!$("mm-bizacc").value || !mf.bizPicked)) { const g = businessAccountFor(val("mm-desc") + " " + val("mm-merchant"), accountsOf(val("mm-biz"))); if (g) $("mm-bizacc").value = g; }
     return true;
   }
-  return !!(t.closest && t.closest("#mnManual, #mnObl, #mnOwedMeta, #mnExisting, #mnBalCheck, #mnPaste"));
+  return !!(t.closest && t.closest("#mnManual, #mnObl, #mnOwedMeta, #mnExisting, #mnBalCheck, #mnPaste, #mnNewAcc, #mnBudget"));
 }
 export async function handleMoneySubmit(form, rerender, submitter) {
   switch (form.id) {
@@ -584,6 +708,7 @@ export async function handleMoneySubmit(form, rerender, submitter) {
     case "mnObl": await saveOwe(); return true;
     case "mnOwedMeta": await saveOwedMeta(); return true;
     case "mnExisting": await submitExisting(form); return true;
+    case "mnNewAcc": await submitNewAccount(); return true;
     case "mnBalCheck": { const bal = val("bc-bal"); if (bal === "") return toastError("Enter the balance."), true; const a = accById(form.dataset.acc);
       const r = await addBalanceCheck(form.dataset.entity, a.id, val("bc-date") || today(), a.subtype === "card" ? -Math.abs(Number(bal)) : Number(bal), val("bc-note"));
       if (r.error) return toastError(r.error), true; await refresh(); closeSheet(); toast("Saved"); return true; }

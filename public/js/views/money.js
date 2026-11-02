@@ -5,9 +5,10 @@ import { state } from "../store.js";
 import { ICON, emptyState } from "../ui.js";
 import { fin, accById, partyById, accountsOf, moneyAccounts, linesOf, linesOfJournal, canWriteFin, filesOf, pendingRowsOf, obligationFor, lastBalanceCheck, entityById } from "../finapi.js";
 import { money, r2, natural, balanceSheet, monthStart, monthEnd } from "../finance.js";
-import { businessParties, classifyJournal, monthSummary, groupedBalances, receivableItems, FLOW_LABEL, DEBT_KIND_LABEL, CASH, SAVINGS, byJournal } from "../money.js";
+import { businessParties, classifyJournal, monthSummary, groupedBalances, receivableItems, FLOW_LABEL, DEBT_KIND_LABEL, CASH, SAVINGS, byJournal, nativeBalance, journalFx, budgetActual, toBase, CURRENCIES } from "../money.js";
+import { rates } from "./finance.js";
 
-export const MONEY_TABS = { overview: "Overview", transactions: "Transactions", owed: "Owed to me", owe: "I owe", accounts: "Accounts", month: "Monthly report", advanced: "Advanced" };
+export const MONEY_TABS = { overview: "Overview", transactions: "Transactions", owed: "Owed to me", owe: "I owe", accounts: "Accounts", budget: "Budget", month: "Monthly report", advanced: "Advanced" };
 export const ADV_TABS = { entries: "All entries", invoices: "Claims & invoices", bills: "Bills", payments: "Payments", banking: "Bank reconciliation", chart: "Chart of accounts", people: "People",
   intercompany: "Inter-entity", budgets: "Budgets", reports: "Accounting reports", settings: "Settings" };
 const ADV_HINT = { entries: "Every posted entry, with reversals", invoices: "Formal claims raised to people who owe you", bills: "Bills you need to pay, with due dates", payments: "Payments against claims and bills",
@@ -30,7 +31,7 @@ export function moneyModel(e) {
   for (const o of fin.obligations.filter(o => o.entity_id === e.id && o.side === "i_owe" && !o.archived)) {
     if (!owe.some(g => g.account.id === o.account_id && g.party_id === (o.party_id || null))) owe.push({ key: o.account_id + "|" + (o.party_id || ""), account: accById(o.account_id), party_id: o.party_id || null, balance: 0, debits: 0, credits: 0, lines: [] });
   }
-  const cashAccs = moneyAccounts(e.id).filter(a => CASH.has(a.subtype)).map(a => ({ a, b: bal(a) }));
+  const cashAccs = moneyAccounts(e.id).filter(a => CASH.has(a.subtype)).map(a => ({ a, b: bal(a), n: nativeBalance(ls, a) }));
   const cards = moneyAccounts(e.id).filter(a => a.subtype === "card").map(a => ({ a, b: -bal(a) }));
   const cash = r2(cashAccs.reduce((s, x) => s + x.b, 0));
   const owedTotal = r2(owed.reduce((s, g) => s + g.balance, 0)), oweTotal = r2(owe.reduce((s, g) => s + g.balance, 0));
@@ -53,11 +54,11 @@ export function renderMoney(view, e, tab, sub, classic) {
   const w = canWriteFin(e.id), pend = pendingRowsOf(e.id).length;
   const isAdv = !!ADV_TABS[tab];
   if (!MONEY_TABS[tab] && !isAdv) tab = "overview";
-  const body = isAdv ? advancedShell(e, tab, classic) : { overview, transactions, owed: owedTab, owe: oweTab, accounts: accountsTab, month: monthTab, advanced: advancedTab }[tab](e, sub);
+  const body = isAdv ? advancedShell(e, tab, classic) : { overview, transactions, owed: owedTab, owe: oweTab, accounts: accountsTab, budget: budgetTab, month: monthTab, advanced: advancedTab }[tab](e, sub);
   view.innerHTML = `<div class="mn">
   <div class="page-head mn-head"><div><p class="crumb"><a href="#/finance">Finance</a></p><h1>${esc(e.name)} <span class="chip">${e.base_currency}</span></h1>
     <p class="sub">${ICON.lock} Private to you${fin.members.filter(m => m.entity_id === e.id).length > 1 ? " and the people you added" : ""}</p></div>
-    ${w ? `<div class="btnrow noprint"><button class="btn primary mn-capture" data-act="mn-capture" data-entity="${e.id}">${ICON.plus}Capture</button></div>` : ""}</div>
+</div>
   <div class="viewtabs noprint fin-tabs mn-tabs">${Object.entries(MONEY_TABS).map(([k, l]) => `<a href="#/finance/${e.id}/${k}" class="${tab === k || (k === "advanced" && isAdv) ? "on" : ""}">${l}${k === "transactions" && pend ? ` <span class="badge">${pend}</span>` : ""}</a>`).join("")}</div>
   ${pend && tab !== "transactions" && !isAdv ? `<div class="banner info mn-pending">${pend} imported transaction${pend > 1 ? "s" : ""} waiting for your OK. <a href="#/finance/${e.id}/transactions">Review</a></div>` : ""}
   ${body}</div>`;
@@ -72,15 +73,16 @@ function overview(e) {
   const topOwe = [...m.owe].filter(g => g.balance > 0.004).sort((a, b) => b.balance - a.balance);
   const card = (href, label, amount, sub, cls = "") => `<a class="mn-card ${cls}" href="${href}"><span class="mn-l">${label}</span><span class="mn-n num">${amount}</span><span class="mn-s">${sub}</span><span class="mn-go">${ICON.chevron}</span></a>`;
   const monthName = new Date(ms + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long" });
-  const checks = m.cashAccs.map(x => ({ x, c: lastBalanceCheck(x.a.id) })).filter(y => y.c && Math.abs(Number(y.c.balance) - y.x.b) > 0.004);
+  const own = x => (x.a.currency ? x.n : x.b), ownM = x => money(own(x), x.a.currency || e.base_currency);
+  const checks = m.cashAccs.map(x => ({ x, c: lastBalanceCheck(x.a.id) })).filter(y => y.c && Math.abs(Number(y.c.balance) - own(y.x)) > 0.004);
   return `
   <div class="mn-cards">
     ${card(`#/finance/${e.id}/owed`, "Owed to me", M(m.owedTotal, e), topOwed.length ? topOwed.slice(0, 2).map(g => `${esc(groupName(g))} ${M(g.balance, e)}`).join(" · ") : "Nobody owes you anything", "in")}
     ${card(`#/finance/${e.id}/owe`, "I owe", M(m.oweTotal, e), topOwe.length ? `${topOwe.length} item${topOwe.length > 1 ? "s" : ""} · biggest: ${esc(groupName(topOwe[0]))}` : "No debts recorded", "out")}
-    ${card(`#/finance/${e.id}/accounts`, "Cash & bank", M(m.cash, e), m.cashAccs.filter(x => x.b).map(x => `${esc(x.a.name.replace(/ —.*$/, ""))} ${M(x.b, e)}`).slice(0, 2).join(" · ") || "Nothing recorded yet")}
+    ${card(`#/finance/${e.id}/accounts`, "Cash & bank", M(m.cash, e), m.cashAccs.filter(x => x.b).sort((a, b) => !!b.a.currency - !!a.a.currency).map(x => `${esc(x.a.name.replace(/ —.*$/, ""))} ${ownM(x)}`).slice(0, 2).join(" · ") || "Nothing recorded yet")}
     ${card(`#/finance/${e.id}/accounts`, "Net position", M(m.net, e), "What you have + owed to you − what you owe", m.net < 0 ? "bad" : "")}
   </div>
-  ${checks.length ? `<div class="banner warn">${checks.map(y => `${esc(y.x.a.name)}: the bank showed ${M(y.c.balance, e)} on ${fmtDate(y.c.as_of)}, your books show ${M(y.x.b, e)} (difference ${M(Number(y.c.balance) - y.x.b, e)}).`).join("<br>")} <a href="#/finance/${e.id}/accounts">Check</a></div>` : ""}
+  ${checks.length ? `<div class="banner warn">${checks.map(y => { const cc = y.x.a.currency || e.base_currency; return `${esc(y.x.a.name)}: the bank showed ${money(y.c.balance, cc)} on ${fmtDate(y.c.as_of)}, your books show ${money(own(y.x), cc)} (difference ${money(Number(y.c.balance) - own(y.x), cc)}).`; }).join("<br>")} <a href="#/finance/${e.id}/accounts">Check</a></div>` : ""}
   ${!m.bs.balanced ? `<div class="banner bad">Your books don't balance — please report this. Posted entries should always balance.</div>` : ""}
   <div class="grid-2 mn-grid">
     <section class="sect"><div class="sect-h"><h2>${monthName} so far</h2><a class="more" href="#/finance/${e.id}/month">Full report</a></div>${monthRows(e, s)}</section>
@@ -148,7 +150,8 @@ function describe(e, m, j) {
   else { label = "Entry"; amt = r2(jl.reduce((s, l) => s + Number(l.debit), 0)); cls = "neutral"; }
   const files = filesOf("journal_id", j.id).length + (j.source === "partner" ? fin.pdocs.filter(d => d.txn_id === j.source_id).length : 0);
   const imported = fin.importRows.some(r => r.journal_id === j.id);
-  return { j, c, label, amt, cls, via: moneyLine ? acc(moneyLine).name : null, files, imported, biz: !!c.business };
+  const fx = journalFx(jl, fin.moneyFx.find(x => x.journal_id === j.id), e.base_currency);
+  return { j, c, label, amt, cls, via: moneyLine ? acc(moneyLine).name : null, files, imported, biz: !!c.business, fx };
 }
 function txList(e, m, js) {
   if (!js.length) return `<p class="calm">No transactions yet.</p>`;
@@ -156,7 +159,7 @@ function txList(e, m, js) {
     return `<div class="trow mn-txrow ${d.biz ? "biz" : ""}" data-act="fin-open-journal" data-id="${j.id}" role="button" tabindex="0">
       <span class="mn-ico ${d.cls}">${d.biz ? "🏢" : d.cls === "in" ? "↓" : d.cls === "out" ? "↑" : "⇄"}</span>
       <div class="tmain"><div class="ttitle">${esc(j.memo)}</div><div class="tmeta">${fmtDate(j.entry_date)} · ${esc(d.label)}${d.via ? ` · ${esc(d.via)}` : ""}${d.files ? ` · 📎 ${d.files}` : ""}${d.imported ? " · imported" : ""}</div></div>
-      <div class="tside"><b class="num mn-amt ${d.cls}">${d.cls === "in" ? "+" : d.cls === "out" ? "−" : ""}${M(Math.abs(d.amt), e)}</b>${d.biz ? `<span class="chip biz">${esc((d.c.business.name || "Business").split(" ")[0])}</span>` : ""}</div></div>`; }).join("")}</div>`;
+      <div class="tside"><b class="num mn-amt ${d.cls}">${d.cls === "in" ? "+" : d.cls === "out" ? "−" : ""}${d.fx ? money(d.fx.amount, d.fx.ccy) : M(Math.abs(d.amt), e)}</b>${d.fx ? `<small class="hint num" ${d.fx.planning ? 'title="Converted at your planning rate"' : ""}>${M(Math.abs(d.amt), e)}${d.fx.planning ? " ≈" : ""}</small>` : ""}${d.biz ? `<span class="chip biz">${esc((d.c.business.name || "Business").split(" ")[0])}</span>` : ""}</div></div>`; }).join("")}</div>`;
 }
 function transactions(e) {
   const u = mu(), m = moneyModel(e), q = (u.q || "").trim().toLowerCase();
@@ -181,7 +184,7 @@ function txRowHtml(e, d) {
   return `<div class="trow mn-txrow ${d.biz ? "biz" : ""}" data-act="fin-open-journal" data-id="${j.id}" role="button" tabindex="0">
     <span class="mn-ico ${d.cls}">${d.biz ? "🏢" : d.cls === "in" ? "↓" : d.cls === "out" ? "↑" : "⇄"}</span>
     <div class="tmain"><div class="ttitle">${esc(j.memo)}${j.reversed_by || j.reversal_of ? ` <span class="pill inv-void">${j.reversal_of ? "Reversal" : "Reversed"}</span>` : ""}</div><div class="tmeta">${fmtDate(j.entry_date)} · ${esc(d.label)}${d.via ? ` · ${esc(d.via)}` : ""}${d.files ? ` · 📎 ${d.files}` : ""}${d.imported ? " · imported" : ""}</div></div>
-    <div class="tside"><b class="num mn-amt ${d.cls}">${d.cls === "in" ? "+" : d.cls === "out" ? "−" : ""}${M(Math.abs(d.amt), e)}</b>${d.biz ? `<span class="chip biz">${esc((d.c.business.name || "Business").split(" ")[0])}</span>` : ""}</div></div>`;
+    <div class="tside"><b class="num mn-amt ${d.cls}">${d.cls === "in" ? "+" : d.cls === "out" ? "−" : ""}${d.fx ? money(d.fx.amount, d.fx.ccy) : M(Math.abs(d.amt), e)}</b>${d.fx ? `<small class="hint num" ${d.fx.planning ? 'title="Converted at your planning rate"' : ""}>${M(Math.abs(d.amt), e)}${d.fx.planning ? " ≈" : ""}</small>` : ""}${d.biz ? `<span class="chip biz">${esc((d.c.business.name || "Business").split(" ")[0])}</span>` : ""}</div></div>`;
 }
 
 /* ---------- owed to me ---------- */
@@ -224,11 +227,14 @@ function oweTab(e) {
 function accountsTab(e) {
   const m = moneyModel(e), w = canWriteFin(e.id), ls = m.ls;
   const other = accountsOf(e.id, a => a.type === "asset" && !CASH.has(a.subtype) && a.subtype !== "receivable").map(a => ({ a, b: m.bal(a) })).filter(x => x.b);
-  const row = (x, extra = "") => `<div class="trow" data-act="fin-ledger" data-id="${x.a.id}" role="button" tabindex="0"><span class="mn-ico neutral">${x.a.subtype === "card" ? "💳" : x.a.subtype === "cash" ? "💵" : SAVINGS.has(x.a.subtype) ? "📈" : x.a.subtype === "fixed_asset" ? "🏠" : "🏦"}</span>
-    <div class="tmain"><div class="ttitle">${esc(x.a.name)}</div><div class="tmeta">${extra}</div></div><div class="tside"><b class="num">${M(x.b, e)}</b></div></div>`;
-  const checkMeta = x => { const c = lastBalanceCheck(x.a.id); if (!c) return w ? `<button class="linkbtn" data-act="mn-balcheck" data-entity="${e.id}" data-acc="${x.a.id}">Enter what the bank shows</button>` : "";
-    const diff = r2(Number(c.balance) - booksAt(ls, x.a.id, c.as_of));
-    return `Bank showed ${M(c.balance, e)} on ${fmtDate(c.as_of)} · ${Math.abs(diff) < 0.005 ? `<span class="ok-text">${ICON.check} matches your books</span>` : `<span class="bad-text">differs by ${M(diff, e)}</span>`}${w ? ` · <button class="linkbtn" data-act="mn-balcheck" data-entity="${e.id}" data-acc="${x.a.id}">Update</button>` : ""}`; };
+  const nat = a => nativeBalance(ls, a), sign = a => (a.type === "liability" ? -1 : 1);
+  const row = (x, extra = "") => { const fc = x.a.currency, nb = fc ? sign(x.a) * nat(x.a) : null, now = fc ? toBase(nb, fc, rates(), e.base_currency) : null;
+    return `<div class="trow" data-act="fin-ledger" data-id="${x.a.id}" role="button" tabindex="0"><span class="mn-ico neutral">${x.a.subtype === "card" ? "💳" : x.a.subtype === "cash" ? "💵" : SAVINGS.has(x.a.subtype) ? "📈" : x.a.subtype === "fixed_asset" ? "🏠" : "🏦"}</span>
+    <div class="tmain"><div class="ttitle">${esc(x.a.name)}${fc ? ` <span class="chip">${fc}</span>` : ""}</div><div class="tmeta">${fc ? `${M(x.b, e)} in your books${now !== null && Math.abs(now - x.b) > 0.5 ? ` · ${M(now, e)} at today's planning rate` : ""}${extra ? " · " : ""}` : ""}${extra}</div></div>
+    <div class="tside"><b class="num">${fc ? money(nb, fc) : M(x.b, e)}</b></div></div>`; };
+  const checkMeta = x => { const c = lastBalanceCheck(x.a.id), cc = x.a.currency || e.base_currency; if (!c) return w ? `<button class="linkbtn" data-act="mn-balcheck" data-entity="${e.id}" data-acc="${x.a.id}">Enter what the bank shows</button>` : "";
+    const diff = r2(Number(c.balance) - booksAt(ls, x.a, c.as_of));
+    return `Bank showed ${money(c.balance, cc)} on ${fmtDate(c.as_of)} · ${Math.abs(diff) < 0.005 ? `<span class="ok-text">${ICON.check} matches your books</span>` : `<span class="bad-text">differs by ${money(diff, cc)}</span>`}${w ? ` · <button class="linkbtn" data-act="mn-balcheck" data-entity="${e.id}" data-acc="${x.a.id}">Update</button>` : ""}`; };
   return `<div class="grid-2 mn-grid">
   <section class="sect"><div class="sect-h"><h2>Cash & bank</h2><span class="c num">${M(m.cash, e)}</span></div><div class="list">${m.cashAccs.map(x => row(x, checkMeta(x))).join("") || `<p class="calm">No accounts.</p>`}</div>
     <p class="hint">"Your books" is the balance from what you've recorded. Enter what the bank app shows to catch anything missing — differences are flagged, never adjusted for you.</p></section>
@@ -240,9 +246,10 @@ function accountsTab(e) {
     <tr class="total"><td>Net position</td><td class="num">${M(m.net, e)}</td></tr></tbody></table></section></div>
   ${m.cards.length ? `<section class="sect"><div class="sect-h"><h2>Credit cards</h2></div><div class="list">${m.cards.map(x => row({ a: x.a, b: x.b }, `owed on the card${lastBalanceCheck(x.a.id) ? ` · statement showed ${M(-Number(lastBalanceCheck(x.a.id).balance), e)}` : ""}${w ? ` · <button class="linkbtn" data-act="mn-balcheck" data-entity="${e.id}" data-acc="${x.a.id}">Enter card statement balance</button>` : ""}`)).join("")}</div></section>` : ""}
   ${other.length ? `<section class="sect"><div class="sect-h"><h2>Savings, investments & property</h2></div><div class="list">${other.map(x => row(x, esc(x.a.subtype.replace("_", " ")))).join("")}</div></section>` : ""}
-  ${w ? `<div class="btnrow noprint"><button class="btn" data-act="fin-opening">Enter opening balances</button><button class="btn" data-act="mn-manual" data-entity="${e.id}" data-kind="transfer">Move money between accounts</button><button class="btn" data-act="fin-account">New account</button></div>` : ""}`;
+  ${w ? `<div class="btnrow noprint"><button class="btn primary" data-act="mn-new-account" data-entity="${e.id}">${ICON.plus}Add an account</button><button class="btn" data-act="mn-manual" data-entity="${e.id}" data-kind="transfer">Move money between accounts</button></div>
+    <p class="hint">Accounts can be in any currency — an Indian bank in INR, cash in BHD. Totals are shown in ${e.base_currency}.</p>` : ""}`;
 }
-const booksAt = (ls, accId, asOf) => r2(ls.filter(l => l.account_id === accId && l.entry_date <= asOf).reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0));
+const booksAt = (ls, a, asOf) => r2(ls.filter(l => l.account_id === a.id && l.entry_date <= asOf).reduce((s, l) => s + (a.currency ? Number(l.fx_currency === a.currency ? l.fx_amount || 0 : 0) : Number(l.debit) - Number(l.credit)), 0));
 
 /* ---------- monthly report ---------- */
 function monthTab(e) {
@@ -264,8 +271,41 @@ function monthTab(e) {
     <section class="sect"><div class="sect-h"><h2>Businesses</h2></div>${s.byBusiness.size ? [...s.byBusiness.values()].map(b => `<div class="mn-row biz"><span>${esc(b.name || "Business")}: paid by me</span><b class="num">${M(b.paid, e)}</b></div>${b.repaid ? `<div class="mn-row in"><span>${esc(b.name || "Business")}: paid me back</span><b class="num">${M(b.repaid, e)}</b></div>` : ""}`).join("") : `<p class="calm">No business payments this month.</p>`}</section>
     <section class="sect"><div class="sect-h"><h2>Money in (cash & bank)</h2><span class="c num">${M(s.cashIn, e)}</span></div>${flowList(s.flowsIn, "in")}</section>
     <section class="sect"><div class="sect-h"><h2>Money out (cash & bank)</h2><span class="c num">${M(s.cashOut, e)}</span></div>${flowList(s.flowsOut, "out")}</section></div>
+  ${(() => { const br = budgetRows(e, ms).filter(r => r.plan && r.a.type === "expense"); return br.length ? `<section class="sect"><div class="sect-h"><h2>Against budget</h2><a class="more" href="#/finance/${e.id}/budget">Edit budget</a></div>
+    <div class="mn-cats">${br.map(r => { const pct = r.actual === null ? 0 : Math.min(100, r.actual / r.plan * 100); return `<div class="mn-cat mn-budcat ${r.actual > r.plan ? "over" : ""}"><span>${esc(r.a.name)}</span><i style="width:${pct.toFixed(1)}%"></i><b class="num">${r.actual === null ? "—" : money(r.actual, r.ccy)} / ${money(r.plan, r.ccy)}</b></div>`; }).join("")}</div></section>` : ""; })()}
   <div class="mn-total ${s.netCash < 0 ? "out" : ""}"><span>Net change in cash & bank</span><b class="num">${M(s.netCash, e)}</b></div>
   <p class="hint">Money moved between your own accounts isn't counted as in or out. Card purchases count as spending when you buy; paying the card bill is a repayment. Reimbursements from a business are not income.</p></div>`;
+}
+
+/* ---------- budget (any currency) ---------- */
+function budgetMonth(e) { const u = mu(), t = today(); return u.month || monthStart(t); }
+function budgetRows(e, ms) {
+  const t = today(), me = monthEnd(ms) > t && ms === monthStart(t) ? t : monthEnd(ms), ls = linesOf(e.id), rt = rates();
+  const accs = accountsOf(e.id, a => (a.type === "expense" || a.type === "income") && a.is_active && !/exchange differences/i.test(a.name));
+  return accs.map(a => { const b = fin.budgets.find(x => x.account_id === a.id && x.month === ms), ccy = (b && b.native_currency) || e.base_currency, plan = b ? Number(b.native_currency ? b.native_amount : b.amount) : 0;
+    const act = budgetActual(ls, a.id, ccy, rt, e.base_currency, ms, me), actual = a.type === "income" ? (act.native === null ? null : -act.native) : act.native;
+    return { a, b, ccy, plan, actual, estimated: act.estimated, base: a.type === "income" ? -act.base : act.base, left: actual === null ? null : r2(plan - actual) }; });
+}
+function budgetTab(e) {
+  const ms = budgetMonth(e), t = today(), w = canWriteFin(e.id), rows = budgetRows(e, ms), rt = rates();
+  const label = new Date(ms + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  const ccys = [...new Set([e.base_currency, ...Object.keys(rt).filter(k => k !== "base"), ...CURRENCIES])];
+  const totPlan = (type) => r2(rows.filter(r => r.a.type === type && r.plan).reduce((s, r) => s + (r.ccy === e.base_currency ? r.plan : (toBase(r.plan, r.ccy, rt, e.base_currency) || 0)), 0));
+  const totAct = (type) => r2(rows.filter(r => r.a.type === type).reduce((s, r) => s + r.base, 0));
+  const tr = r => `<tr data-bacc="${r.a.id}"><td>${esc(r.a.name)}</td>
+    <td>${w ? `<div class="mn-bud"><select class="input sm" aria-label="Currency">${ccys.map(c => `<option ${c === r.ccy ? "selected" : ""}>${c}</option>`).join("")}</select><input class="input sm num" type="number" step="0.01" min="0" value="${r.plan || ""}" placeholder="—"></div>` : (r.plan ? money(r.plan, r.ccy) : "—")}</td>
+    <td class="num">${r.actual === null ? `<span class="hint">no rate</span>` : (r.actual || r.plan ? money(r.actual, r.ccy) + (r.estimated ? ` <small class="hint" title="Part converted at your planning rate">≈</small>` : "") : "")}</td>
+    <td class="num ${r.left !== null && r.plan && r.left < 0 ? (r.a.type === "expense" ? "bad-text" : "ok-text") : ""}">${r.plan && r.left !== null ? money(r.a.type === "income" ? -r.left : r.left, r.ccy) : ""}</td></tr>`;
+  return `<div class="weekpick noprint"><button class="btn sm" data-act="mn-month" data-m="${monthStart(addDays(ms, -1))}">‹</button><b>${label}</b><button class="btn sm" data-act="mn-month" data-m="${monthStart(addDays(monthEnd(ms), 1))}">›</button></div>
+  <div class="mn-cards sm"><div class="mn-card in"><span class="mn-l">Income planned</span><span class="mn-n num">${M(totPlan("income"), e)}</span><span class="mn-s">received ${M(totAct("income"), e)}</span></div>
+    <div class="mn-card out"><span class="mn-l">Spending planned</span><span class="mn-n num">${M(totPlan("expense"), e)}</span><span class="mn-s">spent ${M(totAct("expense"), e)}</span></div>
+    <div class="mn-card"><span class="mn-l">Planned to save</span><span class="mn-n num">${M(totPlan("income") - totPlan("expense"), e)}</span><span class="mn-s">so far ${M(totAct("income") - totAct("expense"), e)}</span></div></div>
+  <form id="mnBudget" data-month="${ms}" onsubmit="return false"><div class="tablewrap"><table class="rtable mn-budtable"><thead><tr><th>Category</th><th>Budget</th><th class="num">Actual</th><th class="num">Left</th></tr></thead><tbody>
+    <tr class="grouprow"><th colspan="4">Income</th></tr>${rows.filter(r => r.a.type === "income").map(tr).join("")}
+    <tr class="grouprow"><th colspan="4">Spending</th></tr>${rows.filter(r => r.a.type === "expense").map(tr).join("")}
+  </tbody></table></div>
+  ${w ? `<div class="btnrow"><button class="btn primary" type="button" data-act="mn-budget-save" data-entity="${e.id}">Save budget for ${label}</button><button class="btn" type="button" data-act="mn-budget-copy" data-entity="${e.id}" data-month="${ms}">Copy to the rest of the year</button></div>` : ""}</form>
+  <p class="hint">Set each line in the currency you think in — Burgery support in INR, groceries in QAR, Bahrain costs in BHD. Actuals use the real foreign amount where it was recorded, otherwise your planning rate (marked ≈). Totals are in ${e.base_currency} at planning rates.</p>`;
 }
 
 /* ---------- advanced ---------- */
