@@ -134,3 +134,15 @@ Overdue task (100 + priority) › Escalated follow-up (90) › Critical mileston
 - Reimbursements debit the partner account and credit business bank/cash — never revenue or a second expense — and can't exceed what is owed.
 - Posted partner transactions are never deleted or edited in amount, date or account; they are reversed (both books) with a reason. Other edits need a reason and are audited (old → new, who, when).
 - Missing documents show "Document Pending"; no links are invented. Month-only dates are labelled "exact date unavailable". Nothing is "overdue" unless repayment terms are set.
+
+## Milestone dates on tasks
+Every task in a project reads as a milestone (project page → **Tasks & timeline**).
+| Field | Rule | Where enforced |
+|---|---|---|
+| Target | the task's deadline | — |
+| Baseline | the first deadline ever set; frozen when the target moves; reset only with **Reset baseline** (`rebaseline_task`) | `tasks_zz_dates` |
+| Actual | set to the completion day (Qatar) on completion; editable; can't be in the future; cleared on reopen | `tasks_zz_dates` |
+| Delay | done: actual − target · open and past target: today − target ("running late") | `taskSchedule()` |
+| Project finish | forecast = latest of (actual for done tasks, today for late open tasks, target otherwise); delay vs the latest baseline | `projectSchedule()` |
+
+Alerts (`run_reminders`): **Due tomorrow** (within 24h, day before), **Due today** (from 08:00 on the target day), **N d late** once a day while open, and **Target moved** to the owner when someone else pushes the target later.

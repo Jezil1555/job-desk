@@ -185,3 +185,38 @@ export function milestoneVariance(m, tz = DEFAULT_TZ, now = new Date()) {
 export const doerOf = t => t.assignee_id || t.owner_id;
 /** Tasks that involve this person: responsible for, assigned to, or waiting for their review. */
 export const involves = (t, uid) => t.owner_id === uid || t.assignee_id === uid || (t.reviewer_id === uid && t.review_status === "requested");
+
+/**
+ * A task read as a milestone (docs/RULES.md · Milestone dates):
+ *  target   = deadline (local date); baseline = the first deadline ever set (frozen by the database)
+ *  actual   = completion day (editable); delay = actual − target once done, today − target while open and late
+ *  slip     = target − baseline (how far the plan itself has moved)
+ */
+export function taskSchedule(t, tz = DEFAULT_TZ, now = new Date()) {
+  const target = t.due_at ? zonedDate(t.due_at, tz) : null;
+  const baseline = t.baseline_due_at ? zonedDate(t.baseline_due_at, tz) : target;
+  const actual = t.status === "completed" ? (t.actual_date || (t.completed_at ? zonedDate(t.completed_at, tz) : null)) : null;
+  const diff = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+  const today = todayISO(tz, now);
+  let delay = null, state = "none";
+  if (t.status === "cancelled") state = "cancelled";
+  else if (actual && target) { delay = diff(target, actual); state = delay > 0 ? "late" : delay < 0 ? "early" : "ontime"; }
+  else if (actual) state = "done";
+  else if (target) { const d = diff(target, today); if (d > 0) { delay = d; state = "running_late"; } else state = d === 0 ? "due_today" : "planned"; }
+  return { target, baseline, actual, delay, slip: target && baseline ? diff(baseline, target) : null, state };
+}
+/** Project roll-up over its top-level tasks: planned finish (latest baseline), current target, forecast finish, delay. */
+export function projectSchedule(tasks, tz = DEFAULT_TZ, now = new Date()) {
+  const live = tasks.filter(t => !t.deleted_at && !t.parent_id && t.status !== "cancelled");
+  const rows = live.map(t => ({ t, s: taskSchedule(t, tz, now) }));
+  const max = xs => xs.filter(Boolean).sort().pop() || null;
+  const today = todayISO(tz, now);
+  const baseline = max(rows.map(r => r.s.baseline)), target = max(rows.map(r => r.s.target));
+  // forecast: finished tasks count at their actual date, late open ones at today, the rest at their target
+  const forecast = max(rows.map(r => r.s.actual || (r.s.state === "running_late" ? today : r.s.target)));
+  const allDone = live.length > 0 && live.every(t => t.status === "completed");
+  const diff = (a, b) => a && b ? Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000) : null;
+  return { baseline, target, forecast, finished: allDone ? forecast : null, delay: diff(baseline, forecast), late: rows.filter(r => r.s.state === "running_late").length,
+    done: rows.filter(r => r.s.actual).length, total: rows.length, lateDone: rows.filter(r => r.s.state === "late").length };
+}
+export const delayText = d => d === null ? "" : d > 0 ? `${d}d late` : d < 0 ? `${-d}d early` : "On time";

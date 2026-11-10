@@ -2,7 +2,7 @@
 import { esc, fmtDate, zonedDate, todayISO, addDays, daysFromToday, ago, fmtDateTime, relDay, zonedToISO } from "../util.js";
 import { updateTask } from "../api.js";
 import { openCapture } from "../sheets/capture.js";
-import { isOpen, isOverdue, dueInDays, followUpDue, attentionItems, sortTasks, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
+import { projectSchedule, isOpen, isOverdue, dueInDays, followUpDue, attentionItems, sortTasks, PROJECT_STATUS_LABEL, STATUS_LABEL, PRIORITY_LABEL } from "../logic.js";
 import { state, wsById, projectById, contactById, nameOf, shortName, activeWorkspaces } from "../store.js";
 import { habitChecklist, activeHabits, doneSet } from "./goals.js";
 import { habitDueOn } from "../insights.js";
@@ -126,11 +126,19 @@ function agItem(x) {
   return `<button class="ag-it fu" data-act="open-followup" data-id="${x.f.id}">${ICON.phone}${esc(x.f.subject)}</button>`;
 }
 
+function phSchedule(p) {
+  const ts = state.tasks.filter(t => t.project_id === p.id);
+  const ps = projectSchedule(ts, state.tz);
+  if (!ps.forecast) return "";
+  const nxt = ts.filter(t => !t.parent_id && !t.deleted_at && !["completed", "cancelled"].includes(t.status) && t.due_at).sort((a, b) => a.due_at.localeCompare(b.due_at))[0];
+  const hasMs = (state.healthById.get(p.id) || {}).next_milestone_title;
+  return `<span>Finish ${fmtDate(ps.forecast, { day: "numeric", month: "short" })}${ps.delay > 0 ? ` <b class="bad-text">· ${ps.delay}d late</b>` : ""}</span>${nxt && !hasMs ? `<span>Next: ${esc(nxt.title)}</span>` : ""}`;
+}
 export function phRow(p) {
   const h = state.healthById.get(p.id) || {}, ws = wsById(p.workspace_id);
   const pct = h.progress ?? null;
   return `<a class="ph-row" href="#/p/${p.id}">
-    <div class="ph-name"><span class="ttitle">${esc(p.name)}</span><span class="tmeta"><span class="m-ws">${wsDot(ws)}${esc(ws ? ws.name : "")}</span>${h.next_milestone_title ? `<span>Next: ${esc(h.next_milestone_title)}${h.next_milestone_date ? " · " + fmtDate(h.next_milestone_date) : ""}</span>` : ""}</span></div>
+    <div class="ph-name"><span class="ttitle">${esc(p.name)}</span><span class="tmeta"><span class="m-ws">${wsDot(ws)}${esc(ws ? ws.name : "")}</span>${phSchedule(p)}${h.next_milestone_title ? `<span>Next: ${esc(h.next_milestone_title)}${h.next_milestone_date ? " · " + fmtDate(h.next_milestone_date) : ""}</span>` : ""}</span></div>
     <div class="ph-bar"><div class="bar"><i style="width:${pct || 0}%"></i></div><span class="num">${pct === null ? "—" : pct + "%"}</span></div>
     <div class="ph-status">${projectPill(h.effective_status || "on_track")}</div>
   </a>`;

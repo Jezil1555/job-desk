@@ -126,3 +126,8 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 - Live through the existing realtime channel; also refetches every 5 minutes as a safety net and re-renders every minute so "overdue" stays current. Keeps the screen awake (Wake Lock) where the browser allows. `F` toggles full screen; "Hide empty" is remembered per screen.
 - Read-only view of existing data: no schema change. Opened from Tasks → "Wall board". Files: `js/views/wall.js`, `main.js`, `views/tasks.js`, `styles.css`, `sw.js` (cache v23).
 - Verified: unit tests 96/96; e2e 251/251 including new wall-board checks.
+
+## 2026-11-10 — Tasks as milestones (baseline / actual / delay)
+- Migration `20261110120000_task_milestone_dates.sql`: `tasks.baseline_due_at`, `actual_date`, `due_today_for`; trigger `tasks_zz_dates`; RPC `rebaseline_task`; `run_reminders` adds due-today and days-late wording, project name in alerts. 6 existing tasks backfilled (baseline = current deadline) with triggers off.
+- Project page: **Tasks & timeline** table (target, was-date, actual, delay, subtasks, files) replaces the open/completed lists; hero gains **Finish** (forecast + delay). Workspace project list shows finish date and delay. Task panel shows a Baseline / Target / Actual / Delay box with editable actual date.
+- Verified live in a rolled-back transaction: baseline set and kept, actual auto + editable, future actual rejected, reopen clears actual, rebaseline works, overdue alert "3d late". Not verified: "target moved by someone else" alert (QCLOUD has one member). Unit 102/102, e2e 254/254.

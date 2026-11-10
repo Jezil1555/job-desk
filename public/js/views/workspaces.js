@@ -1,11 +1,11 @@
 // Workspaces → projects → milestones & tasks.
 import { esc, fmtDate, todayISO, daysFromToday } from "../util.js";
-import { isOpen, isOverdue, sortTasks, milestoneVariance, PROJECT_STATUS_LABEL, PRIORITY_LABEL, overduePrerequisites, openPrerequisites, isClosed } from "../logic.js";
+import { taskSchedule, projectSchedule, delayText, STATUS_LABEL, isOpen, isOverdue, sortTasks, milestoneVariance, PROJECT_STATUS_LABEL, PRIORITY_LABEL, overduePrerequisites, openPrerequisites, isClosed } from "../logic.js";
 import { emit, state, wsById, projectById, membersOf, nameOf, canWrite, isWsOwner, roleIn, contactById } from "../store.js";
 import { ICON, taskRow, section, emptyState, wsDot, avatar, projectPill, prioChip } from "../ui.js";
 import { phRow, actRow } from "./home.js";
 import { linkedPanel, NOTE_KIND, DOC_CATEGORY } from "../sheets/knowledge.js";
-import { sb, run } from "../api.js";
+import { sb, run, linksFor, reindex } from "../api.js";
 import { ago } from "../util.js";
 import { renderSetup } from "./setup.js";
 
@@ -110,29 +110,71 @@ export function renderProject(view, id) {
   const depFails = ts.filter(t => isOpen(t) && overduePrerequisites(t, state.deps, state.taskById).length);
   const fus = state.followUps.filter(f => f.project_id === id && ["open", "escalated"].includes(f.status));
   const pct = h.progress ?? null;
+  loadProjectTasks(id);
+  const ps = projectSchedule(ts, tz);
   view.innerHTML = `
   <div class="page-head"><div><p class="crumb"><a href="#/workspaces">Workspaces</a> / <a href="#/w/${w.id}">${esc(w.name)}</a></p><h1>${esc(p.name)}</h1>${p.description ? `<p class="sub">${esc(p.description)}</p>` : ""}</div>
     <div class="filters">${writable ? `<button class="btn sm" data-act="save-template" data-id="${id}">Save as template</button><button class="btn sm" data-act="edit-project" data-id="${id}">${ICON.settings}Project settings</button>` : ""}</div></div>
   <section class="proj-hero">
     <div class="ph-col"><span class="k">Status</span><div>${projectPill(h.effective_status || "on_track")}</div>${p.manual_status ? `<span class="calc-note">Manual: “${esc(p.manual_status_reason || "")}” · calculated ${PROJECT_STATUS_LABEL[h.calculated_status] || ""}</span>` : h.reasons && h.reasons.length ? `<span class="calc-note">${esc(h.reasons.join(" · "))}</span>` : ""}</div>
     <div class="ph-col"><span class="k">Progress</span><div class="ph-bar big"><div class="bar"><i style="width:${pct || 0}%"></i></div><b class="num">${pct === null ? "—" : pct + "%"}</b></div><span class="calc-note">${h.progress_basis === "milestones" ? "weighted by completed milestones" : h.progress_basis === "tasks" ? "share of completed top-level tasks" : "add milestones or tasks to measure progress"}</span></div>
+    <div class="ph-col"><span class="k">Finish</span><div>${ps.forecast ? `<span class="num">${fmtDate(ps.forecast)}</span> ${ps.finished ? "· done" : "forecast"}` : "—"}${ps.delay ? ` <span class="dchip ${ps.delay > 0 ? "late" : "early"}">${delayText(ps.delay)}</span>` : ps.forecast && ps.baseline ? ` <span class="dchip ok">On time</span>` : ""}</div><span class="calc-note">${ps.total ? `${ps.done}/${ps.total} tasks done${ps.late ? ` · ${ps.late} running late` : ""}${ps.baseline ? ` · planned ${fmtDate(ps.baseline)}` : ""}` : "add tasks with target dates"}</span></div>
     <div class="ph-col"><span class="k">Next milestone</span><div>${h.next_milestone_title ? `${esc(h.next_milestone_title)}${h.next_milestone_date ? ` <span class="num">· ${fmtDate(h.next_milestone_date)}</span>` : ""}` : "—"}</div></div>
     <div class="ph-col"><span class="k">Owner · dates</span><div>${esc(nameOf(p.owner_id))}</div><span class="calc-note">${p.start_date ? fmtDate(p.start_date) : "no start"} → ${p.target_date ? fmtDate(p.target_date) : "no target"}${p.budget ? ` · budget ${esc(p.budget_currency || "")} ${Number(p.budget).toLocaleString("en-US")}` : ""}</span>
       ${p.baselined_at ? `<span class="calc-note">Baseline ${p.baseline_target_date ? fmtDate(p.baseline_target_date) : "—"}${slipText(p.baseline_target_date, p.target_date)}</span>` : ""}</div>
   </section>
+  ${timelineSection(ts, w, id, writable)}
   ${p.next_action ? `<div class="banner info"><b>Next required action:</b> ${esc(p.next_action)}</div>` : ""}
   ${risks.length || depFails.length ? section("Risks & blockers", `<div class="list">${[...new Set([...risks, ...depFails])].map(t => taskRow(t, { showWs: false })).join("")}</div>`, { count: risks.length + depFails.length, cls: "risk" }) : ""}
   <div class="grid-2">
-    ${section("Milestones", `${ms.length ? `<ol class="mslist">${ms.map(m => msRow(m, writable)).join("")}</ol>` : `<p class="calm">No milestones. Add the key stages, for example Purchase order → Production → Material readiness → Dispatch → Shipping → Customs clearance → Site delivery.</p>`}
+    ${section("Milestones", `${ms.length ? `<ol class="mslist">${ms.map(m => msRow(m, writable)).join("")}</ol>` : `<p class="calm">Optional. Your tasks above already work as milestones (target, actual, delay). Use project milestones only for big phase gates that group several tasks.</p>`}
       ${writable ? `<button class="btn sm" data-act="new-milestone" data-project="${id}">${ICON.plus}Add milestone</button>` : ""}`, { count: ms.length })}
     ${section("Follow-ups", `${fus.length ? `<div class="list compact">${fus.map(fuLine).join("")}</div>` : `<p class="calm">No open follow-ups linked to this project.</p>`}
       ${writable ? `<button class="btn sm" data-act="new-followup" data-ws="${w.id}" data-project="${id}">${ICON.plus}New follow-up</button>` : ""}`, { count: fus.length })}
   </div>
   ${scheduleSection(p, ms, writable)}
-  ${section("Open tasks", `${open.length ? `<div class="list">${open.map(t => taskRow(t, { showWs: false })).join("")}</div>` : `<p class="calm">No open tasks.</p>`}
-    ${writable ? `<button class="btn sm" data-act="capture" data-ws="${w.id}" data-project="${id}">${ICON.plus}Add task</button>` : ""}`, { count: open.length })}
-  ${linkedPanel("project", id, p.workspace_id)}
-  ${done.length ? section("Completed", `<div class="list">${done.slice(0, 15).map(t => taskRow(t, { showWs: false })).join("")}</div>`, { count: done.length }) : ""}`;
+  ${linkedPanel("project", id, p.workspace_id)}`;
+}
+
+/* Every task in the project, including completed ones older than the main load window (fetched once per visit). */
+const fullLoaded = new Set();
+function loadProjectTasks(id) {
+  if (fullLoaded.has(id)) return;
+  fullLoaded.add(id);
+  sb.from("tasks").select("*").eq("project_id", id).is("deleted_at", null).limit(1000).then(({ data }) => {
+    if (!data) return;
+    let added = 0;
+    data.forEach(t => { if (!state.taskById.has(t.id)) { state.tasks.push(t); added++; } });
+    if (added) { reindex(); emit("data"); }
+  });
+}
+window.addEventListener("hashchange", () => fullLoaded.clear());
+
+const STATE_CLS = { late: "late", running_late: "late", early: "early", ontime: "ok", due_today: "soon" };
+/** Tasks as milestones: baseline → target → actual → delay, in target order. */
+function timelineSection(ts, w, id, writable) {
+  const tz = state.tz;
+  const rows = ts.filter(t => !t.parent_id).map(t => ({ t, s: taskSchedule(t, tz) }))
+    .sort((a, b) => (a.s.target || "9999").localeCompare(b.s.target || "9999") || (a.t.sort || 0) - (b.t.sort || 0) || (a.t.created_at || "").localeCompare(b.t.created_at || ""));
+  const add = writable ? `<button class="btn sm" data-act="capture" data-ws="${w.id}" data-project="${id}">${ICON.plus}Add task</button>` : "";
+  if (!rows.length) return section("Tasks & timeline", `<p class="calm">No tasks yet. Add each step as a task with a target date, e.g. Prepare docs → Customs clearance → Freight finalised → Delivered. Each one tracks its own target, actual date, delay, notes and files.</p>${add}`);
+  const body = rows.map(({ t, s }, i) => {
+    const files = linksFor("task", t.id).filter(x => x.type === "document" || x.type === "note").length;
+    const subs = state.tasks.filter(x => x.parent_id === t.id && !x.deleted_at && x.status !== "cancelled");
+    const moved = s.slip ? `<small class="was" title="Original target">was ${fmtDate(s.baseline, { day: "numeric", month: "short" })}</small>` : "";
+    return `<tr class="${t.status === "completed" || t.status === "cancelled" ? "done" : ""}" data-act="open-task" data-id="${t.id}" role="button" tabindex="0">
+      <td class="num tl-i">${i + 1}</td>
+      <td class="tl-t"><span class="tl-title">${esc(t.title)}</span>${t.status === "waiting" && t.waiting_on ? `<small>Waiting on ${esc(t.waiting_on)}</small>` : t.status === "blocked" && t.blocker ? `<small>Blocked: ${esc(t.blocker)}</small>` : ""}</td>
+      <td><span class="pill s-${t.status}">${STATUS_LABEL[t.status]}</span></td>
+      <td class="num">${s.target ? fmtDate(s.target, { day: "numeric", month: "short" }) : `<span class="faint">—</span>`}${moved}</td>
+      <td class="num">${s.actual ? fmtDate(s.actual, { day: "numeric", month: "short" }) : `<span class="faint">—</span>`}</td>
+      <td>${s.state === "cancelled" ? `<span class="faint">Cancelled</span>` : s.delay !== null || s.state === "ontime" ? `<span class="dchip ${STATE_CLS[s.state] || ""}">${s.state === "running_late" ? `${s.delay}d late · open` : delayText(s.delay)}</span>` : s.state === "due_today" ? `<span class="dchip soon">Due today</span>` : `<span class="faint">${s.target ? "Planned" : "No target"}</span>`}</td>
+      <td class="tl-x">${subs.length ? `<span title="Subtasks">${subs.filter(x => x.status === "completed").length}/${subs.length}</span>` : ""}${files ? `<span title="Notes & files">📎 ${files}</span>` : ""}${t.assignee_id || t.owner_id ? avatar(t.assignee_id || t.owner_id, "sm") : ""}</td>
+    </tr>`;
+  }).join("");
+  const open = rows.filter(r => !["completed", "cancelled"].includes(r.t.status)).length;
+  return section("Tasks & timeline", `<div class="tablewrap"><table class="rtable tltable"><thead><tr><th>#</th><th>Task</th><th>Status</th><th>Target</th><th>Actual</th><th>Delay</th><th></th></tr></thead><tbody>${body}</tbody></table></div>
+    <p class="hint">Click a task to update it, add notes or attach files. Completing a task records today as its actual date; you can change it.</p>${add}`, { count: open });
 }
 
 const dayDiff = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);

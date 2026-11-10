@@ -780,6 +780,16 @@ with sync_playwright() as pw:
     page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector(".proj-hero")
     check("project shows milestone-weighted progress 33%", "33%" in page.inner_text(".proj-hero"))
     check("milestone variance shows days late from real dates", "2d late" in page.inner_text(".mslist"))
+    p1_top = [t for t in DB["tasks"] if t.get("project_id") == P1 and not t.get("parent_id") and not t.get("deleted_at")]
+    check("project timeline lists every top-level task", page.locator(".tltable tbody tr").count() == len(p1_top), f'{page.locator(".tltable tbody tr").count()} vs {len(p1_top)}')
+    check("project hero shows a finish date", "finish" in page.inner_text(".proj-hero").lower())
+    shot(page, "04b-project-timeline", True)
+    if p1_top:
+        page.locator(".tltable tbody tr").first.click(); page.wait_for_selector("#sheet", state="visible")
+        first_due = sorted(p1_top, key=lambda t: t.get("due_at") or "9999")[0].get("due_at")
+        if first_due: check("task panel shows target / actual / delay", page.locator(".sched-box").count() == 1)
+        shot(page, "04c-task-schedule")
+        page.keyboard.press("Escape")
     shot(page, "04-project", True)
 
     # Follow-ups & calendar & search

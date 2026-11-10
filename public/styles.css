@@ -889,3 +889,19 @@ body.wall-on .view { padding: 0 !important; max-width: none !important; margin: 
 @keyframes wallpulse { 50% { opacity: .3; } }
 @media (max-width: 900px) { .wall-head { flex-wrap: wrap; gap: 12px; } .wall-kpis { order: 3; width: 100%; overflow-x: auto; justify-content: flex-start; } .wall-kpis div { min-width: 86px; } }
 @media (prefers-reduced-motion: reduce) { .wall-foot .live i { animation: none; } }
+
+/* ---------- Project timeline: tasks as milestones ---------- */
+.tltable tbody tr { cursor: pointer; } .tltable tbody tr:hover { background: var(--surface-2); }
+.tltable tr.done td { color: var(--muted); } .tltable tr.done .tl-title { text-decoration: line-through; text-decoration-color: var(--line-2); }
+.tltable .tl-i { color: var(--faint); width: 28px; }
+.tltable .tl-t { min-width: 200px; } .tltable .tl-title { font-weight: 500; } .tltable .tl-t small { display: block; color: var(--muted); font-size: .78rem; }
+.tltable small.was { display: block; color: var(--faint); font-size: .72rem; text-decoration: line-through; }
+.tltable .tl-x { white-space: nowrap; text-align: right; color: var(--muted); font-size: .8rem; } .tltable .tl-x > * { margin-left: 8px; vertical-align: middle; }
+.faint { color: var(--faint); }
+.dchip { display: inline-block; font-size: .74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--sunken); color: var(--muted); }
+.dchip.late { background: var(--bad-soft); color: var(--bad); } .dchip.early, .dchip.ok { background: var(--ok-soft); color: var(--ok); } .dchip.soon { background: var(--warn-soft); color: var(--warn); }
+.sched-box { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
+.sched-box .k { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 3px; }
+.sched-box b { font-weight: 600; } .sched-box .input { padding: 4px 8px; }
+@media (max-width: 600px) { .sched-box { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 760px) { .proj-hero { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); } }

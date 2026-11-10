@@ -1,6 +1,6 @@
 // Task detail & editor. Autosaves each field after the server confirms; rules are enforced server-side too.
-import { esc, zonedDate, zonedTime, zonedToISO, fmtDateTime, ago } from "../util.js";
-import { STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements, fieldsFor,
+import { esc, zonedDate, zonedTime, zonedToISO, fmtDateTime, ago, fmtDate, todayISO } from "../util.js";
+import { taskSchedule, delayText, STATUSES, STATUS_LABEL, PRIORITIES, PRIORITY_LABEL, RECURRENCE_LABEL, isClosed, isOpen, completionBlockers, statusRequirements, fieldsFor,
          openPrerequisites, dependents, taskProgress, overduePrerequisites } from "../logic.js";
 import { state, wsById, projectById, membersOf, nameOf, shortName, subtasksOf, canWrite, contactById, activeWorkspaces } from "../store.js";
 import { sb, run, updateTask, createTask, reopenTask, refreshTask, linksFor, requestReview, reviewTask } from "../api.js";
@@ -88,7 +88,7 @@ function renderTaskInner(sh, t) {
   const subs = subtasksOf(t.id), prog = taskProgress(t, subs);
   const tz = state.tz;
   const parent = t.parent_id ? state.taskById.get(t.parent_id) : null;
-  const tabs = { details: "Details", plan: `Subtasks, links & files${(subs.length + linksFor("task", t.id).length) ? " · " + (subs.length + linksFor("task", t.id).length) : ""}`, updates: `Updates${sheetState.comments ? " · " + sheetState.comments.filter(c => c.kind === "note").length : ""}`, history: "History" };
+  const tabs = { details: "Details", plan: `Subtasks, notes & files${(subs.length + linksFor("task", t.id).length) ? " · " + (subs.length + linksFor("task", t.id).length) : ""}`, updates: `Updates${sheetState.comments ? " · " + sheetState.comments.filter(c => c.kind === "note").length : ""}`, history: "History" };
   const savedNote = sheetState.saving ? `<span class="savestate">Saving…</span>` : sheetState.savedAt && Date.now() - sheetState.savedAt < 4000 ? `<span class="savestate ok">Saved</span>` : "";
   sh.innerHTML = sheetHead(closed ? "Task · " + STATUS_LABEL[t.status] : "Task", `${ws ? esc(ws.name) : ""}${parent ? ` · subtask of <a href="#" data-act="open-task" data-id="${parent.id}">${esc(parent.title)}</a>` : ""} ${savedNote}`) + `
   <div class="sh-body">
@@ -168,6 +168,7 @@ function detailsTab(t, w, prog, subs) {
     <div class="field"><span>Deadline <small>(time optional)</small></span>${dtInputs("tf-due", t.due_at, t.due_all_day, tz)}</div>
     <div class="field"><span>Next follow-up</span>${dtInputs("tf-fu", t.follow_up_at, false, tz)}</div>
   </div>
+  ${scheduleBox(t, w)}
   ${!t.due_at ? `<p class="hint">No deadline set. That's fine for captured ideas; add one when you commit to a date.</p>` : ""}
   ${t.status === "waiting" ? `<fieldset class="group"><legend>Waiting details</legend><div class="grid2">
     <label class="field"><span>Waiting on</span><input class="input" id="tf-waiting_on" value="${esc(t.waiting_on || "")}" ${ro} list="contactList"></label>
@@ -191,6 +192,20 @@ function detailsTab(t, w, prog, subs) {
   <label class="field"><span>Repeats</span><select class="input" id="tf-recurrence" ${ro}><option value="">Doesn't repeat</option>${Object.entries(RECURRENCE_LABEL).map(([k, v]) => `<option value="${k}" ${t.recurrence === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
   ${t.recurrence ? `<p class="hint">When completed, the next occurrence is created automatically from the deadline.</p>` : ""}
   <p class="meta-foot">Created by ${esc(shortName(t.created_by))} · ${fmtDateTime(t.created_at, state.tz, true)} · updated ${ago(t.updated_at)}</p>`;
+}
+
+/** Target vs baseline vs actual for this task, so each task reads as a milestone. */
+function scheduleBox(t, w) {
+  if (!t.due_at && t.status !== "completed") return "";
+  const s = taskSchedule(t, state.tz), short = d => d ? fmtDate(d, { day: "numeric", month: "short", year: "numeric" }) : "—";
+  const delay = s.state === "cancelled" ? "Cancelled" : s.state === "running_late" ? `${s.delay}d late (still open)` : s.delay !== null ? delayText(s.delay) : s.state === "due_today" ? "Due today" : "On track";
+  const cls = ["late", "running_late"].includes(s.state) ? "late" : ["early", "ontime"].includes(s.state) ? "ok" : s.state === "due_today" ? "soon" : "";
+  return `<div class="sched-box" aria-label="Schedule">
+    <div><span class="k">Baseline</span><b class="num">${short(s.baseline)}</b>${s.slip ? `<br><small class="${s.slip > 0 ? "bad-text" : "ok-text"}">target moved ${s.slip > 0 ? "+" : ""}${s.slip}d</small>${w ? ` <button type="button" class="linkbtn" data-act="task-rebaseline" data-id="${t.id}">Reset</button>` : ""}` : ""}</div>
+    <div><span class="k">Target</span><b class="num">${short(s.target)}</b></div>
+    <div><span class="k">Actual</span>${t.status === "completed" ? `<input class="input" type="date" id="tf-actual_date" value="${s.actual || ""}" max="${todayISO(state.tz)}" ${w ? "" : "disabled"} aria-label="Actual completion date">` : `<b class="faint">not done</b>`}</div>
+    <div><span class="k">Delay</span><span class="dchip ${cls}">${delay}</span></div>
+  </div>`;
 }
 
 /** The workspace's (and project's) own fields — same task engine, configurable per workspace. */
@@ -371,6 +386,13 @@ export async function handleTaskClick(act, el) {
   switch (act) {
     case "task-tab": sheetState.tab = el.dataset.tab; rerenderSheet(); if (sheetState.tab === "plan") loadContacts(sheetState.id); return true;
     case "complete-task": await setStatus(t, "completed"); rerenderSheet(); return true;
+    case "task-rebaseline": {
+      const ok = await dialog({ title: "Reset the baseline?", text: "The current target becomes the new original plan, and the 'moved' count starts again from zero. Use this when a new date has been formally agreed.", confirm: "Reset baseline" });
+      if (!ok) return true;
+      const r = await run(sb.rpc("rebaseline_task", { p_task: t.id }));
+      if (r.error) toastError(r.error); else { await refreshTask(t.id); toast("Baseline reset"); rerenderSheet(); }
+      return true;
+    }
     case "review-request": {
       const blockers = completionBlockers({ ...t, reviewer_id: null }, subtasksOf(t.id), state.deps, state.taskById, state.fieldDefs);
       if (blockers.length) return toastError("Finish first: " + blockers.join(", ") + "."), true;
