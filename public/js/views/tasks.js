@@ -41,6 +41,7 @@ export function renderTasks(view, viewKey) {
   <div class="page-head"><div><h1>${esc(VIEWS[v].label)}</h1><p class="sub">${esc(VIEWS[v].hint)} · <span class="num">${list.length}</span> task${list.length === 1 ? "" : "s"}</p></div>
     <div class="filters">
       <div class="segbtn" role="group" aria-label="Layout"><button class="${mode === "list" ? "on" : ""}" data-act="task-mode" data-m="list" aria-label="List">${ICON.list}</button><button class="${mode === "board" ? "on" : ""}" data-act="task-mode" data-m="board" aria-label="Board">${ICON.board}</button></div>
+      <a class="btn sm" href="#/board" title="Full-screen live board for a spare monitor">Wall board</a>
       <button class="btn sm ${state.ui.selecting ? "on" : ""}" data-act="bulk-toggle">${state.ui.selecting ? "Done selecting" : "Select"}</button>
     </div></div>
   <div class="viewtabs">${MAIN_VIEWS.map(k => `<a href="#/tasks/${k}" class="${k === v ? "on" : ""}">${VIEWS[k].label}<span class="c">${vcount(k)}</span></a>`).join("")}

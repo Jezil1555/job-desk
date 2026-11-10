@@ -120,3 +120,9 @@ Notes & documents (private storage, signed URLs), goals & habits, reports (daily
 - UI: single Capture (top bar / phone centre button, route-aware); sidebar Quick capture and Home inline button removed; larger J. Desk wordmark, J. mark moved to the sidebar footer.
 - Tests: DB 27/27 new; re-run on top: phase 3 73/73, partners 61/61, inter-entity 21/21, production 24/24, FX 29/29, simple money 62/62. Unit 96/96. Browser 245/245 (12 new).
 - Live rolled-back DB run still pending the owner's approval of the database tool prompt.
+
+## 2026-11-10 — Wall board (`#/board`)
+- New full-screen view for a spare monitor: one column per active workspace, open top-level tasks sorted overdue → deadline → priority, with "Done today" at the foot of each column. KPI strip (pending, overdue, due today, waiting/blocked, done today) and a clock in the profile time zone.
+- Live through the existing realtime channel; also refetches every 5 minutes as a safety net and re-renders every minute so "overdue" stays current. Keeps the screen awake (Wake Lock) where the browser allows. `F` toggles full screen; "Hide empty" is remembered per screen.
+- Read-only view of existing data: no schema change. Opened from Tasks → "Wall board". Files: `js/views/wall.js`, `main.js`, `views/tasks.js`, `styles.css`, `sw.js` (cache v23).
+- Verified: unit tests 96/96; e2e 251/251 including new wall-board checks.

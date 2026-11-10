@@ -28,6 +28,7 @@ import { openDraft, handleAssistClick, handleAssistChange } from "./sheets/assis
 import { handleIntegrationsClick, handleIntegrationsChange } from "./views/integrations.js";
 import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, handleKnowledgeChange, handleKnowledgeInput } from "./sheets/knowledge.js";
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
+import { renderWall, enterWall, leaveWall, handleWallClick, handleWallKey } from "./views/wall.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
 
@@ -49,7 +50,7 @@ function parseRoute() {
   const r = { name: seg[0] || "home", a: seg[1], b: seg[2], c: seg[3], params };
   return r;
 }
-const navKey = r => ({ home: "home", tasks: "tasks", calendar: "tasks", followups: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
+const navKey = r => ({ home: "home", tasks: "tasks", board: "tasks", calendar: "tasks", followups: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
 
 function render() {
   if (!state.user) return;
@@ -63,6 +64,7 @@ function render() {
     return;
   }
   renderNav();
+  if (r.name === "board") enterWall(); else leaveWall();
   const view = $("view");
   if (!state.loaded) { view.innerHTML = `<div class="loading"><div class="spinner"></div>Loading your command centre…</div>`; return; }
   const k = navKey(r);
@@ -70,6 +72,7 @@ function render() {
   try {
     switch (r.name) {
       case "tasks": renderTasks(view, r.a || "today"); title = (VIEWS[r.a] || VIEWS.today).label; bindBoard(view); break;
+      case "board": renderWall(view); title = "Board"; break;
       case "workspaces": renderWorkspaces(view); break;
       case "w": renderWorkspace(view, r.a, r.b || "projects"); break;
       case "p": renderProject(view, r.a); break;
@@ -137,6 +140,7 @@ document.addEventListener("click", async e => {
   if (await handleTaskClick(act, el)) return;
   if (await handleFormClick(act, el)) return;
   if (await handleTasksClick(act, el, rerender)) return;
+  if (handleWallClick(act, rerender)) return;
   if (handleCalendarClick(act, el, rerender)) return;
   if (await handleSettingsClick(act, el, rerender)) return;
   if (await handleKnowledgeClick(act, el)) return;
@@ -185,6 +189,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && sheetOpen() && $("dialog").hidden) { closeSheet(); if (!sheetOpen()) clearTaskSheet(); return; }
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !state.loaded) return;
+  if (!sheetOpen() && handleWallKey(e)) return;
   if ((e.key === "n" || e.key === "c") && !sheetOpen()) { e.preventDefault(); if (isPersonalFinance()) openMoneyCapture(state.route.a); else openCapture(); }
   if (e.key === "/" && !sheetOpen()) { e.preventDefault(); location.hash = "#/search"; }
   if ((e.key === "Enter" || e.key === " ") && document.activeElement.dataset && document.activeElement.dataset.act && document.activeElement.getAttribute("role") === "button") { e.preventDefault(); document.activeElement.click(); }
@@ -258,7 +263,7 @@ on("data", () => { if (state.user) { if (!sheetOpen() || !document.activeElement
 on("notifications", () => renderNav());
 on("fin", () => { if (!state.user) return; if (state.route.name === "finance" || (state.route.name === "home" && !sheetOpen())) render(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "open" && e.data.url) location.hash = e.data.url.replace(/^\/?#?/, "#"); });
-setInterval(() => { if (state.loaded && !sheetOpen() && ["home", "tasks"].includes(state.route.name)) render(); }, 60000);
+setInterval(() => { if (state.loaded && !sheetOpen() && ["home", "tasks", "board"].includes(state.route.name)) render(); }, 60000);
 
 /* ---------- notifications ---------- */
 async function markRead(ids) {

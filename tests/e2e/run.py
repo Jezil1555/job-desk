@@ -761,6 +761,21 @@ with sync_playwright() as pw:
     shot(page, "03-board")
     page.click('[data-act="task-mode"][data-m="list"]')
 
+    # Wall board (full-screen, one column per workspace)
+    page.goto(BASE + "/#/board"); page.wait_for_selector(".wall-cols")
+    check("wall board has a column per active workspace", page.locator(".wcol").count() == len([w for w in DB["workspaces"] if not w.get("archived")]))
+    check("wall board hides the app chrome", not page.locator(".sidenav").is_visible() and not page.locator(".topbar").is_visible())
+    check("wall board shows open top-level tasks", page.locator(".wcard").count() == len([t for t in DB["tasks"] if t["status"] not in ("completed", "cancelled") and not t.get("deleted_at") and not t.get("parent_id") and t["workspace_id"] in [w["id"] for w in DB["workspaces"] if not w.get("archived")]]))
+    shot(page, "03b-wall-board")
+    page.locator(".wcard").first.click(); page.wait_for_selector("#sheet", state="visible")
+    check("wall card opens the task", page.locator("#sheetWrap").is_visible())
+    page.keyboard.press("Escape")
+    page.click('[data-act="wall-empty"]')
+    check("hide-empty keeps only busy workspaces", all(c.locator(".wcard, .wdone").count() > 0 for c in page.locator(".wcol").all()))
+    page.click('[data-act="wall-empty"]')
+    page.goto(BASE + "/#/home"); page.wait_for_selector("#homeCap", timeout=10000)
+    check("leaving the board brings the app chrome back", page.locator(".topbar").is_visible() or page.locator(".sidenav").is_visible())
+
     # Project page
     page.goto(BASE + f"/#/p/{P1}"); page.wait_for_selector(".proj-hero")
     check("project shows milestone-weighted progress 33%", "33%" in page.inner_text(".proj-hero"))
