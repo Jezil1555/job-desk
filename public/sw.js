@@ -1,5 +1,5 @@
 // J. Desk service worker: offline app shell + phone push notifications.
-const CACHE = "jdesk-v30";
+const CACHE = "jdesk-v31";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/config.js", "/manifest.webmanifest",
   "/js/main.js", "/js/util.js", "/js/logic.js", "/js/insights.js", "/js/finance.js", "/js/finapi.js", "/js/smart.js", "/js/assist.js", "/js/partners.js", "/js/xlsx.js", "/js/api.js", "/js/store.js", "/js/ui.js",
@@ -24,7 +24,7 @@ self.addEventListener("fetch", e => {
   const isShell = url.origin === location.origin || url.hostname === "cdn.jsdelivr.net" || url.hostname.includes("fonts.g");
   if (!isShell) return;
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(url.origin === location.origin ? new Request(e.request, { cache: "no-cache" }) : e.request).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request).then(r => r || caches.match("/index.html")))

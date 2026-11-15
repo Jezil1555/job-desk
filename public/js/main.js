@@ -372,4 +372,9 @@ sb.auth.onAuthStateChange((event, session) => {
   if (!state.user) { state.loaded = false; unsubscribe(); showAuth(); }
   else if (prev !== state.user.id) setTimeout(showApp, 0);
 });
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").then(reg => reg.update()).catch(() => {}));
+  // when a new version takes over, reload once so the latest screens show without a manual hard refresh
+  let reloaded = false; const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+}
