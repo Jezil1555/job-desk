@@ -47,6 +47,9 @@ export async function loadAll() {
     notifications: notifs, lastComments: comments, activity, notes: notesK, documents: docs, links, goals, habits, habitLogs, healthLogs, reviews, fieldDefs, templates,
     loaded: true, loadedAt: Date.now()
   });
+  // steps (task milestones) load on their own so an older database without the table still opens
+  const stq = await sb.from("task_steps").select("*").order("sort").order("created_at").limit(10000);
+  state.steps = stq.error ? [] : (stq.data || []);
   state.profiles = {}; prof.forEach(p => (state.profiles[p.id] = p));
   state.me = state.profiles[uid] || { id: uid, email: state.user.email, display_name: "", timezone: "Asia/Qatar", prefs: {} };
   state.prefs = Object.assign({ dashboard_hidden: [], saved_views: [], default_ws: null, task_sort: "smart", task_mode: "list" }, state.me.prefs || {});
@@ -132,7 +135,7 @@ export function subscribe(onNotification) {
   if (channel) sb.removeChannel(channel);
   const reload = () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => loadAll().catch(() => {}), 400); };
   channel = sb.channel("cc-" + state.user.id);
-  ["workspaces", "workspace_members", "projects", "milestones", "tasks", "task_dependencies", "task_comments", "follow_ups", "follow_up_logs", "contacts", "notes", "documents", "record_links"]
+  ["workspaces", "workspace_members", "projects", "milestones", "tasks", "task_steps", "task_dependencies", "task_comments", "follow_ups", "follow_up_logs", "contacts", "notes", "documents", "record_links"]
     .forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t }, reload));
   channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${state.user.id}` }, p => {
     if (!state.notifications.some(n => n.id === p.new.id)) state.notifications.unshift(p.new);

@@ -30,13 +30,12 @@ import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, ha
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWall, enterWall, leaveWall, handleWallClick, handleWallKey } from "./views/wall.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
+import { renderSimpleHome, renderSimpleWorkspace, renderSimpleProject, handleSimpleClick, handleSimpleSubmit, simpleCapture } from "./views/simple.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
 
 const cfg = window.JOBDESK_CONFIG;
 const NAV = [
   { key: "home", label: "Home", icon: "home", href: "#/home" },
-  { key: "tasks", label: "Tasks", icon: "tasks", href: "#/tasks/today" },
-  { key: "workspaces", label: "Projects", icon: "folder", href: "#/workspaces" },
   { key: "finance", label: "Finance", icon: "finance", href: "#/finance" },
   { key: "personal", label: "Personal", icon: "user", href: "#/personal" }
 ];
@@ -50,7 +49,7 @@ function parseRoute() {
   const r = { name: seg[0] || "home", a: seg[1], b: seg[2], c: seg[3], params };
   return r;
 }
-const navKey = r => ({ home: "home", tasks: "tasks", board: "tasks", calendar: "tasks", followups: "tasks", workspaces: "workspaces", w: "workspaces", p: "workspaces", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
+const navKey = r => ({ home: "home", tasks: "tasks", board: "tasks", calendar: "tasks", followups: "tasks", workspaces: "home", w: "home", p: "home", classic: "home", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
 
 function render() {
   if (!state.user) return;
@@ -74,8 +73,8 @@ function render() {
       case "tasks": renderTasks(view, r.a || "today"); title = (VIEWS[r.a] || VIEWS.today).label; bindBoard(view); break;
       case "board": renderWall(view); title = "Board"; break;
       case "workspaces": renderWorkspaces(view); break;
-      case "w": renderWorkspace(view, r.a, r.b || "projects"); break;
-      case "p": renderProject(view, r.a); break;
+      case "w": r.b ? renderWorkspace(view, r.a, r.b) : renderSimpleWorkspace(view, r.a); title = "Workspace"; break;
+      case "p": r.b === "classic" ? renderProject(view, r.a) : renderSimpleProject(view, r.a); title = "Project"; break;
       case "calendar": renderCalendar(view); break;
       case "followups": renderFollowUps(view); title = "Follow-ups"; break;
       case "search": renderSearch(view); title = "Search"; break;
@@ -86,7 +85,8 @@ function render() {
       case "reports": renderReports(view, r.a || "daily"); break;
       case "personal": renderPersonal(view); title = "Personal"; break;
       case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((fe.kind === "personal" ? (MONEY_TABS[r.b] || ADV_TABS[r.b]) : FIN_TABS[r.b]) || "Overview"); } break;
-      default: renderHome(view); title = "Home";
+      case "classic": renderHome(view); title = "Command Centre"; break;
+      default: renderSimpleHome(view); title = "Home";
     }
   } catch (e) {
     console.error(e);
@@ -114,7 +114,7 @@ function renderNav() {
     <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>
     <div class="side-foot"><img class="side-mark" src="/icons/logo.svg" alt="J." width="26" height="26" title="J. Desk"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
   $("bottomnav").innerHTML = [
-    ["home", "#/home", "home", "Home"], ["tasks", "#/tasks/today", "tasks", "Tasks"], ["capture", null, "plus", "Capture"], ["workspaces", "#/workspaces", "folder", "Projects"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
+    ["home", "#/home", "home", "Home"], ["capture", null, "plus", "Capture"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
   ].map(([key, href, ic, label]) => key === "capture" ? `<button class="bn-capture" data-act="capture" aria-label="Quick capture">${ICON.plus}</button>` :
     `<a href="${href}" class="${k === key ? "on" : ""}">${ICON[ic]}<span>${label}</span>${counts[key] ? `<b class="cnt">${counts[key]}</b>` : ""}</a>`).join("");
   const b = $("bellCount"); b.hidden = !unread; b.textContent = unread > 99 ? "99+" : unread;
@@ -136,6 +136,7 @@ document.addEventListener("click", async e => {
   const act = el.dataset.act;
   if (el.tagName === "A" && !["apply-view", "close-sheet", "filter-ws"].includes(act)) e.preventDefault();
   if (act === "open-task" && e.target.closest("[data-act]") !== el) return;
+  if (await handleSimpleClick(act, el)) return;
   if (await handleCaptureClick(act, el)) return;
   if (await handleTaskClick(act, el)) return;
   if (await handleFormClick(act, el)) return;
@@ -160,7 +161,7 @@ document.addEventListener("click", async e => {
   const id = el.dataset.id;
   switch (act) {
     case "close-sheet": closeSheet(); if (!sheetOpen()) clearTaskSheet(); break;
-    case "capture": if (!el.dataset.ws && !el.dataset.project && isPersonalFinance()) { openMoneyCapture(state.route.a); break; } openCapture({ workspace_id: el.dataset.ws || undefined, project_id: el.dataset.project || null, status: el.dataset.project ? "not_started" : undefined }); break;
+    case "capture": if (!el.dataset.ws && !el.dataset.project && await simpleCapture()) break; if (!el.dataset.ws && !el.dataset.project && isPersonalFinance()) { openMoneyCapture(state.route.a); break; } openCapture({ workspace_id: el.dataset.ws || undefined, project_id: el.dataset.project || null, status: el.dataset.project ? "not_started" : undefined }); break;
     case "open-task": e.preventDefault(); openTask(id); break;
     case "open-followup": openFollowUp(id); break;
     case "open-project": location.hash = "#/p/" + id; closeAllSheets(); break;
@@ -190,7 +191,7 @@ document.addEventListener("keydown", e => {
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !state.loaded) return;
   if (!sheetOpen() && handleWallKey(e)) return;
-  if ((e.key === "n" || e.key === "c") && !sheetOpen()) { e.preventDefault(); if (isPersonalFinance()) openMoneyCapture(state.route.a); else openCapture(); }
+  if ((e.key === "n" || e.key === "c") && !sheetOpen()) { e.preventDefault(); if (isPersonalFinance()) openMoneyCapture(state.route.a); else simpleCapture().then(h => { if (!h) openCapture(); }); }
   if (e.key === "/" && !sheetOpen()) { e.preventDefault(); location.hash = "#/search"; }
   if ((e.key === "Enter" || e.key === " ") && document.activeElement.dataset && document.activeElement.dataset.act && document.activeElement.getAttribute("role") === "button") { e.preventDefault(); document.activeElement.click(); }
 });
@@ -239,6 +240,7 @@ document.addEventListener("submit", async e => {
   const form = e.target;
   if (form.id === "authForm") return submitAuth();
   if (form.id === "topSearchForm") { location.hash = "#/search"; return; }
+  if (await handleSimpleSubmit(form)) return;
   if (await handleCaptureSubmit(form)) return;
   if (await handleTaskSubmit(form)) return;
   if (await handleFormSubmit(form)) return;
