@@ -779,6 +779,13 @@ with sync_playwright() as pw:
         check(f"[{tag}] entity deck shows project cost 1.05 Cr", "₹1.05 Cr" in txt, txt[:200])
         check(f"[{tag}] three investors at 33.3% each", txt.count("33.3%") >= 3 and "₹35,00,000" in txt)
         check(f"[{tag}] my position card", page.locator(".iv-me").count() == 1)
+        page.click('[data-act="inv-investor"]:not([data-id]) >> nth=0'); page.wait_for_selector("#invInv")
+        page.fill("#invInv [name=name]", "Burgery In Hospitality Ventures"); page.fill("#invInv [name=amount]", "0"); page.fill("#invInv [name=equity]", "28")
+        page.click("#invInv .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
+        for nm in ["Steeja", "Jezil", "Nihan"]:
+            page.click(f'.iv-table tr:has-text("{nm}")'); page.wait_for_selector("#invInv"); page.fill("#invInv [name=equity]", "24"); page.click("#invInv .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
+        eq = page.inner_text(".iv-table")
+        check(f"[{tag}] equity column adds to 100% with a no-capital partner", "100%" in eq and "No capital" in eq and "28%" in eq, eq[-300:])
         # sales: add a month, then Excel upload
         page.click('.viewtabs a[href$="/sales"]'); page.wait_for_selector('[data-act="inv-sale"]')
         page.click('[data-act="inv-sale"]'); page.wait_for_selector("#invSale")

@@ -78,11 +78,13 @@ function figures(id) {
   const invested = sum(ins, x => x.amount), received = sum(rs, x => x.amount);
   const per = ins.map(x => {
     const got = sum(rs.filter(r => r.investor_id === x.id), r => r.amount);
-    return { x, got, share: pct(x.amount, Number(e.project_cost) || invested), recovered: pct(got, Number(x.amount)), pending: Math.max(0, Number(x.amount) - got) };
+    const cap = Number(x.amount) > 0;
+    return { x, got, cap, equity: x.equity_pct === null || x.equity_pct === undefined ? null : Number(x.equity_pct), share: pct(x.amount, Number(e.project_cost) || invested), recovered: cap ? pct(got, Number(x.amount)) : null, pending: Math.max(0, Number(x.amount) - got) };
   });
   const salesTotal = sum(ss, x => x.sales), profitTotal = sum(ss.filter(x => x.net_profit !== null), x => x.net_profit);
   const last = ss[ss.length - 1] || null, last6 = ss.slice(-6);
-  return { e, ins, rs, ss, invested, received, pending: Math.max(0, invested - received), recovered: pct(received, invested), per, salesTotal, profitTotal, last, avg6: last6.length ? sum(last6, x => x.sales) / last6.length : 0, me: per.find(p => p.x.is_me) };
+  const eqs = per.filter(p => p.equity !== null), equityTotal = Math.round(sum(eqs, p => p.equity) * 1000) / 1000;
+  return { e, ins, rs, ss, invested, hasEquity: eqs.length > 0, equityTotal, capitalCount: per.filter(p => p.cap).length, received, pending: sum(per.filter(p => p.cap), p => p.pending), recovered: pct(sum(per.filter(p => p.cap), p => p.got), invested), per, salesTotal, profitTotal, last, avg6: last6.length ? sum(last6, x => x.sales) / last6.length : 0, me: per.find(p => p.x.is_me) };
 }
 
 /* ---------------- chart (single series bars, hover tooltip) ---------------- */
@@ -169,22 +171,23 @@ function overviewTab(f, owner) {
   return `
     <div class="sw-kpis iv-kpis">
       ${tile("Total project cost", money(cost || f.invested, cur), unalloc)}
-      ${tile("Total invested", money(f.invested, cur), `${f.ins.length} investor${f.ins.length === 1 ? "" : "s"}`)}
+      ${tile("Total invested", money(f.invested, cur), `by ${f.capitalCount} investor${f.capitalCount === 1 ? "" : "s"}`)}
       ${tile("Returns received", money(f.received, cur), `${f.recovered}% of capital back`, "ok")}
       ${tile("Pending to recover", money(f.pending, cur), "capital not yet returned", f.pending ? "warn" : "")}
       ${tile("Sales to date", money(f.salesTotal, cur), f.ss.length ? `${f.ss.length} month${f.ss.length === 1 ? "" : "s"}` : "no months added")}
       ${tile("Avg monthly sales", money(f.avg6, cur), "last 6 months")}
     </div>
     ${f.me ? `<section class="iv-me"><div><small>My position</small><b>${esc(f.me.x.name)}</b></div>
-      <div><small>Invested</small><b>${money(f.me.x.amount, cur)}</b></div><div><small>Share</small><b>${f.me.share}%</b></div>
+      <div><small>Invested</small><b>${money(f.me.x.amount, cur)}</b></div>${f.me.equity !== null ? `<div><small>Equity</small><b>${f.me.equity}%</b></div>` : ""}<div><small>Capital share</small><b>${f.me.share}%</b></div>
       <div><small>Received</small><b>${money(f.me.got, cur)}</b></div><div><small>Pending</small><b>${money(f.me.pending, cur)}</b></div>
       <div class="iv-me-bar"><span class="sw-bar"><i style="width:${Math.min(100, f.me.recovered)}%"></i></span><small>${f.me.recovered}% recovered</small></div></section>` : ""}
-    <section class="sw-sect"><div class="sw-sect-h"><h2>Investors</h2>${owner ? `<button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add investor</button>` : ""}</div>
-      ${f.ins.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Investor</th><th class="r">Invested</th><th class="r">Share</th><th class="r">Returns received</th><th>Recovered</th><th class="r">Pending</th></tr></thead><tbody>
+    <section class="sw-sect"><div class="sw-sect-h"><h2>Partners & investors</h2>${owner ? `<button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add partner</button>` : ""}</div>
+      ${f.hasEquity ? `<p class="hint">Capital share = part of the money put in. Equity = ownership of the business${f.equityTotal !== 100 ? ` — <span class="warn-text">equity adds up to ${f.equityTotal}%, not 100%</span>` : ""}.</p>` : ""}
+      ${f.ins.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Partner</th><th class="r">Capital</th><th class="r">Capital share</th>${f.hasEquity ? `<th class="r">Equity</th>` : ""}<th class="r">Returns received</th><th>Recovered</th><th class="r">Pending</th></tr></thead><tbody>
         ${f.per.map(p => `<tr ${owner ? `data-act="inv-investor" data-id="${p.x.id}" data-entity="${e.id}" class="click"` : ""}><td><b>${esc(p.x.name)}</b>${p.x.is_me ? ` <span class="chip">Me</span>` : ""}${p.x.invested_on ? `<small class="faint"> · ${dmy(p.x.invested_on)}</small>` : ""}</td>
-          <td class="r num">${moneyFull(p.x.amount, cur)}</td><td class="r num">${p.share}%</td><td class="r num">${moneyFull(p.got, cur)}</td>
-          <td><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span> <small class="num">${p.recovered}%</small></td><td class="r num">${moneyFull(p.pending, cur)}</td></tr>`).join("")}
-        <tr class="tot"><td>Total</td><td class="r num">${moneyFull(f.invested, cur)}</td><td class="r num">${pct(f.invested, cost || f.invested)}%</td><td class="r num">${moneyFull(f.received, cur)}</td><td><small class="num">${f.recovered}%</small></td><td class="r num">${moneyFull(f.pending, cur)}</td></tr>
+          <td class="r num">${p.cap ? moneyFull(p.x.amount, cur) : `<span class="faint">No capital</span>`}</td><td class="r num">${p.cap ? p.share + "%" : "—"}</td>${f.hasEquity ? `<td class="r num"><b>${p.equity === null ? "—" : p.equity + "%"}</b></td>` : ""}<td class="r num">${moneyFull(p.got, cur)}</td>
+          <td>${p.cap ? `<span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span> <small class="num">${p.recovered}%</small>` : `<span class="faint">—</span>`}</td><td class="r num">${p.cap ? moneyFull(p.pending, cur) : "—"}</td></tr>`).join("")}
+        <tr class="tot"><td>Total</td><td class="r num">${moneyFull(f.invested, cur)}</td><td class="r num">${pct(f.invested, cost || f.invested)}%</td>${f.hasEquity ? `<td class="r num ${f.equityTotal !== 100 ? "warn-text" : ""}" title="${f.equityTotal !== 100 ? "Equity doesn't add up to 100%" : ""}">${f.equityTotal}%</td>` : ""}<td class="r num">${moneyFull(f.received, cur)}</td><td><small class="num">${f.recovered}%</small></td><td class="r num">${moneyFull(f.pending, cur)}</td></tr>
       </tbody></table></div>` : `<div class="sw-empty">No investors yet.${owner ? ` Add each investor with the amount they put in, e.g. Jezil ₹35 L.` : ""}</div>`}
     </section>
     <div class="iv-two">
@@ -238,7 +241,7 @@ function returnsTab(f, owner) {
       <label class="field-inline">Investor <select class="input sm" id="inv-ret-who"><option value="">All investors</option>${f.ins.map(x => `<option value="${x.id}" ${x.id === who ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
       <label class="field-inline">Year <select class="input sm" id="inv-ret-year"><option value="">All years</option>${years.map(y => `<option ${y === yr ? "selected" : ""}>${y}</option>`).join("")}</select></label>
       ${owner && f.ins.length ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-return" data-entity="${e.id}">${ICON.plus}Record returns</button><button class="btn sm" data-act="inv-doc-new" data-entity="${e.id}" data-kind="ledger">${ICON.download}Add payment ledger</button></span>` : ""}</div>
-    <div class="iv-per">${f.per.map(p => `<div class="iv-per-c ${who === p.x.id ? "on" : ""}"><b>${esc(p.x.name)}</b><span>${money(p.got, cur)} <small>of ${money(p.x.amount, cur)}</small></span><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span><small>${p.recovered}% recovered · ${money(p.pending, cur)} pending</small></div>`).join("")}</div>
+    <div class="iv-per">${f.per.map(p => `<div class="iv-per-c ${who === p.x.id ? "on" : ""}"><b>${esc(p.x.name)}${p.equity !== null ? ` <small class="faint">· ${p.equity}% equity</small>` : ""}</b>${p.cap ? `<span>${money(p.got, cur)} <small>of ${money(p.x.amount, cur)}</small></span><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span><small>${p.recovered}% recovered · ${money(p.pending, cur)} pending</small>` : `<span>${money(p.got, cur)} <small>received</small></span><small>No capital invested</small>`}</div>`).join("")}</div>
     <section class="sw-sect"><h2>Payments received <span class="c">${rs.length}</span></h2>
     ${rs.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Paid on</th><th>For month</th><th>Investor</th><th class="r">Amount</th><th>Note</th>${owner ? "<th></th>" : ""}</tr></thead><tbody>
       ${rs.map(r => `<tr><td>${dmy(r.paid_on)}</td><td>${r.period ? monthLabel(r.period, true) : "—"}</td><td>${esc(name(r.investor_id))}</td><td class="r num">${moneyFull(r.amount, cur)}</td><td class="small">${esc(r.note || "")}</td>${owner ? `<td class="r"><button class="iconbtn sm sw-del" data-act="inv-return-del" data-id="${r.id}" aria-label="Delete payment">${ICON.trash}</button></td>` : ""}</tr>`).join("")}
@@ -276,8 +279,8 @@ function settingsTab(f, owner) {
         <label class="field"><span>Start date (optional)</span><input class="input" type="date" name="start" value="${e.start_date || ""}"></label>
         <button class="btn primary">Save</button>
       </form></section>
-    <section class="sw-sect iv-panel"><div class="sw-sect-h"><h2>Investors</h2><button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add</button></div>
-      ${f.ins.length ? `<div class="iv-docs">${f.per.map(p => `<div class="iv-doc click" data-act="inv-investor" data-id="${p.x.id}" data-entity="${e.id}" role="button" tabindex="0"><div class="tmain"><b>${esc(p.x.name)}</b>${p.x.is_me ? ` <span class="chip">Me</span>` : ""}<small class="faint">${moneyFull(p.x.amount, cur)} · ${p.share}%</small></div><span class="faint">Edit</span></div>`).join("")}</div>` : `<p class="hint">No investors yet.</p>`}
+    <section class="sw-sect iv-panel"><div class="sw-sect-h"><h2>Partners & investors</h2><button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add</button></div>
+      ${f.ins.length ? `<div class="iv-docs">${f.per.map(p => `<div class="iv-doc click" data-act="inv-investor" data-id="${p.x.id}" data-entity="${e.id}" role="button" tabindex="0"><div class="tmain"><b>${esc(p.x.name)}</b>${p.x.is_me ? ` <span class="chip">Me</span>` : ""}<small class="faint">${p.cap ? `${moneyFull(p.x.amount, cur)} · ${p.share}% of capital` : "No capital"}${p.equity !== null ? ` · ${p.equity}% equity` : ""}</small></div><span class="faint">Edit</span></div>`).join("")}</div>` : `<p class="hint">No investors yet.</p>`}
       <h2 class="iv-h2">Shared with</h2>
       <p class="hint">People you add here can see this entity only — read-only. They can't see your other entities, workspaces or Finance. They need a J. Desk account first.</p>
       ${mem ? `<div class="iv-docs">${mem.map(m => `<div class="iv-doc"><div class="tmain"><b>${esc(m.display_name || m.email)}</b><small class="faint">${esc(m.email)} · ${m.role === "owner" ? "Owner" : "View only"}</small></div>${m.role === "viewer" ? `<button class="btn sm danger" data-act="inv-unshare" data-entity="${e.id}" data-user="${m.user_id}">Remove</button>` : ""}</div>`).join("")}</div>` : `<p class="hint">Loading…</p>`}
@@ -330,16 +333,19 @@ function investorForm(entityId, id) {
   openSheet(sh => {
     sh.innerHTML = sheetHead(x ? "Edit investor" : "Add investor", esc(e.name)) + `<form class="sh-body" id="invInv">
       <label class="field"><span>Name</span><input class="input" name="name" value="${esc(x ? x.name : "")}" maxlength="120" required autofocus></label>
-      <div class="grid2"><label class="field"><span>Amount invested (${e.currency})</span><input class="input" name="amount" value="${x ? x.amount : ""}" inputmode="decimal" placeholder="e.g. 35 L" required></label>
+      <div class="grid3"><label class="field"><span>Capital invested (${e.currency})</span><input class="input" name="amount" value="${x ? x.amount : ""}" inputmode="decimal" placeholder="e.g. 35 L, or 0"></label>
+      <label class="field"><span>Equity % (optional)</span><input class="input" name="equity" value="${x && x.equity_pct !== null && x.equity_pct !== undefined ? Number(x.equity_pct) : ""}" inputmode="decimal" placeholder="e.g. 24"></label>
       <label class="field"><span>Invested on (optional)</span><input class="input" type="date" name="on" value="${x && x.invested_on || ""}"></label></div>
+      <p class="hint">Equity is the ownership share. It can differ from capital, e.g. an operating partner with equity but no capital.</p>
       <label class="check"><input type="checkbox" name="me" ${x && x.is_me ? "checked" : ""}> This is me (shows "My position" on the dashboard)</label>
       <label class="field"><span>Note (optional)</span><input class="input" name="note" value="${esc(x && x.note || "")}" maxlength="1000"></label>
       <div class="sheet-foot">${x ? `<button type="button" class="btn danger" id="invInvDel">${ICON.trash}Delete</button>` : ""}<button class="btn primary block">Save</button></div></form>`;
     sh.querySelector("#invInv").onsubmit = async ev => {
       ev.preventDefault(); ev.stopPropagation();
-      const fm = ev.target, amt = parseAmount(fm.amount.value);
-      if (amt === undefined || amt === null) return toastError("Amount isn't a number. Try 35 L or 3500000.");
-      const row = { name: fm.name.value.trim(), amount: amt, invested_on: fm.on.value || null, is_me: fm.me.checked, note: fm.note.value.trim() || null };
+      const fm = ev.target, amt = parseAmount(fm.amount.value) ?? 0, eqS = fm.equity.value.trim().replace("%", ""), eq = eqS === "" ? null : Number(eqS);
+      if (amt === undefined) return toastError("Capital isn't a number. Try 35 L, 3500000 or 0.");
+      if (eq !== null && (isNaN(eq) || eq < 0 || eq > 100)) return toastError("Equity should be a percentage between 0 and 100.");
+      const row = { name: fm.name.value.trim(), amount: amt, equity_pct: eq, invested_on: fm.on.value || null, is_me: fm.me.checked, note: fm.note.value.trim() || null };
       const b = fm.querySelector(".primary"); busy(b);
       const r = x ? await run(sb.from("inv_investors").update(row).eq("id", x.id)) : await run(sb.from("inv_investors").insert({ ...row, entity_id: entityId, sort: investorsOf(entityId).length }));
       busy(b, false); if (r.error) return toastError(r.error);
@@ -493,8 +499,8 @@ function exportEntity(id) {
     { name: "Summary", columns: [{ label: "Item", width: 32 }, { label: `Amount (${cur})`, money: true, width: 20 }, { label: "Note", width: 40 }], rows: [
       ["Total project cost", Number(e.project_cost) || 0, ""], ["Total invested", f.invested, `${f.ins.length} investors`], ["Returns received", f.received, `${f.recovered}% of capital`],
       ["Pending to recover", f.pending, ""], ["Sales to date", f.salesTotal, `${f.ss.length} months`], ["Net profit to date", f.profitTotal, ""], ["Average monthly sales (last 6)", Math.round(f.avg6), ""]] },
-    { name: "Investors", columns: ["Investor", "Invested", "Share %", "Returns received", "Recovered %", "Pending", "Invested on", "Note"].map((label, i) => ({ label, money: [1, 3, 5].includes(i) })),
-      rows: f.per.map(p => [p.x.name, Number(p.x.amount), p.share, p.got, p.recovered, p.pending, p.x.invested_on ? dmy(p.x.invested_on) : "", p.x.note || ""]) },
+    { name: "Investors", columns: ["Partner", "Capital", "Capital share %", "Equity %", "Returns received", "Recovered %", "Pending", "Invested on", "Note"].map((label, i) => ({ label, money: [1, 4, 6].includes(i) })),
+      rows: f.per.map(p => [p.x.name, Number(p.x.amount), p.cap ? p.share : null, p.equity, p.got, p.recovered, p.cap ? p.pending : null, p.x.invested_on ? dmy(p.x.invested_on) : "", p.x.note || ""]) },
     { name: "Sales", columns: ["Month", "Sales", "Expenses", "Net profit", "Margin %", "Note"].map((label, i) => ({ label, money: i >= 1 && i <= 3 })),
       rows: f.ss.map(s => [monthLabel(s.month, true), Number(s.sales), s.expenses === null ? null : Number(s.expenses), s.net_profit === null ? null : Number(s.net_profit), s.net_profit === null || !Number(s.sales) ? null : pct(s.net_profit, s.sales), s.note || ""]) },
     { name: "Returns", columns: ["Paid on", "For month", "Investor", "Amount", "Note"].map((label, i) => ({ label, money: i === 3 })),
