@@ -8,7 +8,7 @@ import { sb, run } from "../api.js";
 import { downloadXlsx } from "../xlsx.js";
 import { parseDate } from "./simpleio.js";
 
-export const inv = { loaded: false, loading: null, entities: [], members: [], investors: [], returns: [], sales: [], docs: [], ui: {} };
+export const inv = { loaded: false, loading: null, entities: [], members: [], investors: [], returns: [], sales: [], daily: [], docs: [], ui: {} };
 const DOC_KIND = { pl: "P/L reports", ledger: "Payment ledgers", contract: "Partner contracts", itr: "ITR filings", other: "Other documents" };
 const DOC_ONE = { pl: "P/L report", ledger: "Payment ledger", contract: "Partner contract", itr: "ITR filing", other: "Other" };
 let rerenderPage = () => {};
@@ -23,11 +23,12 @@ export function loadInv(force = false) {
       sb.from("inv_investors").select("*").order("sort").order("created_at"),
       sb.from("inv_returns").select("*").order("paid_on", { ascending: false }).limit(10000),
       sb.from("inv_sales").select("*").order("month").limit(10000),
-      sb.from("inv_documents").select("*").order("created_at", { ascending: false }).limit(2000)
+      sb.from("inv_documents").select("*").order("created_at", { ascending: false }).limit(2000),
+      sb.from("inv_daily_sales").select("id, entity_id, day, amount").order("day").limit(50000)
     ]);
     const err = q.find(r => r.error);
     if (err) { inv.error = err.error.message; inv.loading = null; rerenderPage(); return; }
-    [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs] = q.map(r => r.data || []);
+    [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs, inv.daily] = q.map(r => r.data || []);
     inv.loaded = true; inv.error = null; inv.loading = null; rerenderPage();
   })();
   return inv.loading;
@@ -38,6 +39,7 @@ const investorsOf = id => inv.investors.filter(x => x.entity_id === id);
 const returnsOf = id => inv.returns.filter(x => x.entity_id === id);
 const salesOf = id => inv.sales.filter(x => x.entity_id === id).sort((a, b) => a.month.localeCompare(b.month));
 const docsOf = id => inv.docs.filter(x => x.entity_id === id);
+const daysOf = (id, month) => inv.daily.filter(x => x.entity_id === id && (!month || x.day.slice(0, 7) === month.slice(0, 7)));
 const sum = (a, f) => a.reduce((t, x) => t + (Number(f(x)) || 0), 0);
 
 /* ---------------- money ---------------- */
@@ -81,7 +83,7 @@ function figures(id) {
     const cap = Number(x.amount) > 0;
     return { x, got, cap, equity: x.equity_pct === null || x.equity_pct === undefined ? null : Number(x.equity_pct), share: pct(x.amount, Number(e.project_cost) || invested), recovered: cap ? pct(got, Number(x.amount)) : null, pending: Math.max(0, Number(x.amount) - got) };
   });
-  const salesTotal = sum(ss, x => x.sales), profitTotal = sum(ss.filter(x => x.net_profit !== null), x => x.net_profit);
+  const salesTotal = sum(ss, x => x.sales), profitTotal = sum(ss.filter(x => x.net_profit != null), x => x.net_profit);
   const last = ss[ss.length - 1] || null, last6 = ss.slice(-6);
   const eqs = per.filter(p => p.equity !== null), equityTotal = Math.round(sum(eqs, p => p.equity) * 1000) / 1000;
   return { e, ins, rs, ss, invested, hasEquity: eqs.length > 0, equityTotal, capitalCount: per.filter(p => p.cap).length, received, pending: sum(per.filter(p => p.cap), p => p.pending), recovered: pct(sum(per.filter(p => p.cap), p => p.got), invested), per, salesTotal, profitTotal, last, avg6: last6.length ? sum(last6, x => x.sales) / last6.length : 0, me: per.find(p => p.x.is_me) };
@@ -89,9 +91,9 @@ function figures(id) {
 
 /* ---------------- chart (single series bars, hover tooltip) ---------------- */
 function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
-function barChart(points, { cur, color = "var(--accent)", negColor = "var(--high)", height = 200, empty = "No data yet." } = {}) {
+function barChart(points, { cur, color = "var(--accent)", negColor = "var(--high)", height = 200, empty = "No data yet.", slot = 44 } = {}) {
   if (!points.length) return `<div class="iv-chart-empty">${esc(empty)}</div>`;
-  const W = Math.max(560, points.length * 44 + 70), H = height, padL = 56, padR = 8, padT = 12, padB = 26;
+  const W = Math.max(560, points.length * slot + 70), H = height, padL = 56, padR = 8, padT = 12, padB = 26;
   const maxV = niceMax(Math.max(0, ...points.map(p => p.value))), minV = Math.min(0, ...points.map(p => p.value)) < 0 ? -niceMax(-Math.min(...points.map(p => p.value))) : 0;
   const y = v => padT + (maxV - v) / (maxV - minV) * (H - padT - padB);
   const band = (W - padL - padR) / points.length, bw = Math.min(24, band - 6);
@@ -213,7 +215,7 @@ function salesTab(f, owner) {
   const { e } = f, cur = e.currency, r = inv.ui.salesRange || "12m";
   const years = [...new Set(f.ss.map(s => s.month.slice(0, 4)))].sort().reverse();
   const ss = salesRange(f.ss, r);
-  const tSales = sum(ss, x => x.sales), tExp = sum(ss.filter(x => x.expenses !== null), x => x.expenses), tProfit = sum(ss.filter(x => x.net_profit !== null), x => x.net_profit);
+  const tSales = sum(ss, x => x.sales), tExp = sum(ss.filter(x => x.expenses != null), x => x.expenses), tProfit = sum(ss.filter(x => x.net_profit != null), x => x.net_profit);
   const best = ss.reduce((b, s) => !b || Number(s.sales) > Number(b.sales) ? s : b, null);
   return `<div class="iv-filters"><label class="field-inline">Show <select class="input sm" id="inv-sales-range">
       ${[["6m", "Last 6 months"], ["12m", "Last 12 months"], ["all", "All time"], ...years.map(y => [y, y])].map(([k, v]) => `<option value="${k}" ${k === r ? "selected" : ""}>${v}</option>`).join("")}</select></label>
@@ -221,12 +223,12 @@ function salesTab(f, owner) {
     <div class="sw-kpis iv-kpis">${tile("Sales", money(tSales, cur), `${ss.length} month${ss.length === 1 ? "" : "s"}`)}${tile("Expenses", money(tExp, cur))}${tile("Net profit", money(tProfit, cur), tSales ? `${pct(tProfit, tSales)}% margin` : "", tProfit < 0 ? "bad" : "ok")}${tile("Best month", best ? money(best.sales, cur) : "—", best ? monthLabel(best.month, true) : "")}</div>
     <div class="iv-two">
       <section class="sw-sect"><h2>Sales trend</h2><div class="iv-panel">${barChart(ss.map(s => ({ label: monthLabel(s.month), value: Number(s.sales), tip: `${monthLabel(s.month, true)} · Sales ${moneyFull(s.sales, cur)}` })), { cur, empty: "No sales in this range." })}</div></section>
-      <section class="sw-sect"><h2>Net profit trend</h2><div class="iv-panel">${barChart(ss.filter(s => s.net_profit !== null).map(s => ({ label: monthLabel(s.month), value: Number(s.net_profit), tip: `${monthLabel(s.month, true)} · Net profit ${moneyFull(s.net_profit, cur)}` })), { cur, color: "var(--info)", empty: "Add net profit to see the trend." })}</div></section>
+      <section class="sw-sect"><h2>Net profit trend</h2><div class="iv-panel">${barChart(ss.filter(s => s.net_profit != null).map(s => ({ label: monthLabel(s.month), value: Number(s.net_profit), tip: `${monthLabel(s.month, true)} · Net profit ${moneyFull(s.net_profit, cur)}` })), { cur, color: "var(--info)", empty: "Add net profit to see the trend." })}</div></section>
     </div>
-    <section class="sw-sect"><h2>Month by month</h2>
+    <section class="sw-sect"><h2>Month by month</h2><p class="hint">Tap a month to see each day's sales.</p>
     ${ss.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Month</th><th class="r">Sales</th><th class="r">Expenses</th><th class="r">Net profit</th><th class="r">Margin</th><th>Note</th></tr></thead><tbody>
-      ${ss.slice().reverse().map(s => `<tr ${owner ? `class="click" data-act="inv-sale" data-id="${s.id}" data-entity="${e.id}"` : ""}><td>${monthLabel(s.month, true)}</td><td class="r num">${moneyFull(s.sales, cur)}</td><td class="r num">${s.expenses === null ? "—" : moneyFull(s.expenses, cur)}</td>
-        <td class="r num ${Number(s.net_profit) < 0 ? "bad-text" : ""}">${s.net_profit === null ? "—" : moneyFull(s.net_profit, cur)}</td><td class="r num">${s.net_profit === null || !Number(s.sales) ? "—" : pct(s.net_profit, s.sales) + "%"}</td><td class="small">${esc(s.note || "")}</td></tr>`).join("")}
+      ${ss.slice().reverse().map(s => { const nd = daysOf(e.id, s.month).length; return `<tr class="click" data-act="inv-month" data-entity="${e.id}" data-month="${s.month}" title="See day by day"><td>${monthLabel(s.month, true)} <small class="faint">${nd ? `· ${nd} days ›` : "›"}</small></td><td class="r num">${moneyFull(s.sales, cur)}</td><td class="r num">${s.expenses == null ? "—" : moneyFull(s.expenses, cur)}</td>
+        <td class="r num ${Number(s.net_profit) < 0 ? "bad-text" : ""}">${s.net_profit == null ? "—" : moneyFull(s.net_profit, cur)}</td><td class="r num">${s.net_profit == null || !Number(s.sales) ? "—" : pct(s.net_profit, s.sales) + "%"}</td><td class="small">${esc(s.note || "")}</td></tr>`; }).join("")}
       <tr class="tot"><td>Total</td><td class="r num">${moneyFull(tSales, cur)}</td><td class="r num">${moneyFull(tExp, cur)}</td><td class="r num">${moneyFull(tProfit, cur)}</td><td class="r num">${tSales ? pct(tProfit, tSales) + "%" : "—"}</td><td></td></tr>
     </tbody></table></div>` : `<div class="sw-empty">No sales figures yet.${owner ? " Add a month, or upload an Excel of past months." : ""}</div>`}</section>`;
 }
@@ -368,8 +370,8 @@ function saleForm(entityId, id) {
     sh.innerHTML = sheetHead(s ? "Edit month" : "Add month", esc(e.name)) + `<form class="sh-body" id="invSale">
       <label class="field"><span>Month</span><input class="input" type="month" name="month" value="${s ? s.month.slice(0, 7) : nextM}" required ${s ? "disabled" : ""}></label>
       <div class="grid3"><label class="field"><span>Sales</span><input class="input" name="sales" value="${s ? s.sales : ""}" inputmode="decimal" required placeholder="e.g. 9.5 L"></label>
-      <label class="field"><span>Expenses</span><input class="input" name="exp" value="${s && s.expenses !== null ? s.expenses : ""}" inputmode="decimal"></label>
-      <label class="field"><span>Net profit</span><input class="input" name="profit" value="${s && s.net_profit !== null ? s.net_profit : ""}" inputmode="decimal" placeholder="sales − expenses"></label></div>
+      <label class="field"><span>Expenses</span><input class="input" name="exp" value="${s && s.expenses != null ? s.expenses : ""}" inputmode="decimal"></label>
+      <label class="field"><span>Net profit</span><input class="input" name="profit" value="${s && s.net_profit != null ? s.net_profit : ""}" inputmode="decimal" placeholder="sales − expenses"></label></div>
       <p class="hint">Leave net profit empty and it's worked out as sales minus expenses. Amounts in ${e.currency}; you can type 9.5 L.</p>
       <label class="field"><span>Note (optional)</span><input class="input" name="note" value="${esc(s && s.note || "")}" maxlength="1000"></label>
       <div class="sheet-foot">${s ? `<button type="button" class="btn danger" id="invSaleDel">${ICON.trash}Delete</button>` : ""}<button class="btn primary block">Save</button></div></form>`;
@@ -441,13 +443,41 @@ function docForm(entityId, kind = "pl") {
   });
 }
 
+/* ---------------- one month, day by day ---------------- */
+const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function monthSheet(entityId, month) {
+  const e = entity(entityId), cur = e.currency, owner = isOwner(entityId);
+  openSheet(sh => {
+    const m = inv.sales.find(x => x.entity_id === entityId && x.month === month);
+    const ds = daysOf(entityId, month);
+    const total = sum(ds, d => d.amount), avg = ds.length ? total / ds.length : 0;
+    const best = ds.reduce((b, d) => !b || Number(d.amount) > Number(b.amount) ? d : b, null), low = ds.reduce((b, d) => !b || Number(d.amount) < Number(b.amount) ? d : b, null);
+    const byWd = WD.map((n, i) => { const xs = ds.filter(d => new Date(d.day + "T12:00:00Z").getUTCDay() === i); return { n, avg: xs.length ? sum(xs, d => d.amount) / xs.length : 0, c: xs.length }; }).filter(w => w.c);
+    const topWd = byWd.reduce((b, w) => !b || w.avg > b.avg ? w : b, null);
+    const dayLbl = d => `${Number(d.day.slice(8))} ${WD[new Date(d.day + "T12:00:00Z").getUTCDay()]}`;
+    sh.innerHTML = sheetHead(monthLabel(month, true), esc(e.name)) + `<div class="sh-body iv-month">
+      <div class="sw-kpis iv-kpis">${tile("Sales", money(m ? m.sales : total, cur), ds.length ? `${ds.length} day${ds.length === 1 ? "" : "s"} recorded` : "month total")}
+        ${ds.length ? tile("Average per day", money(avg, cur)) + tile("Best day", money(best.amount, cur), dmy(best.day)) + tile("Lowest day", money(low.amount, cur), dmy(low.day)) : ""}
+        ${m && m.net_profit != null ? tile("Net profit", money(m.net_profit, cur), Number(m.sales) ? `${pct(m.net_profit, m.sales)}% margin` : "", Number(m.net_profit) < 0 ? "bad" : "ok") : ""}</div>
+      ${m && ds.length && Math.abs(total - Number(m.sales)) >= 1 ? `<div class="banner warn">Days add up to ${moneyFull(total, cur)}, but the month total says ${moneyFull(m.sales, cur)}.</div>` : ""}
+      ${ds.length ? `<div class="iv-panel">${barChart(ds.map(d => ({ label: String(Number(d.day.slice(8))), value: Number(d.amount), tip: `${WD[new Date(d.day + "T12:00:00Z").getUTCDay()]} ${dmy(d.day)} · ${moneyFull(d.amount, cur)}` })), { cur, slot: 22 })}</div>
+        ${topWd ? `<p class="hint">Strongest weekday this month: <b>${topWd.n}</b> (avg ${money(topWd.avg, cur)}). ${byWd.map(w => `${w.n} ${money(w.avg, cur)}`).join(" · ")}</p>` : ""}
+        <div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Day</th><th class="r">Sales</th><th class="r">vs daily avg</th></tr></thead><tbody>
+          ${ds.map(d => { const v = avg ? Math.round((Number(d.amount) / avg - 1) * 100) : 0; return `<tr><td>${dayLbl(d)} <small class="faint">${fmtDate(d.day, { month: "short" })}</small></td><td class="r num">${moneyFull(d.amount, cur)}</td><td class="r num ${v < -25 ? "bad-text" : v > 25 ? "ok-text" : "faint"}">${v > 0 ? "+" : ""}${v}%</td></tr>`; }).join("")}
+          <tr class="tot"><td>Total</td><td class="r num">${moneyFull(total, cur)}</td><td></td></tr></tbody></table></div>` :
+        `<div class="sw-empty">No day-by-day figures for this month.${owner ? " Upload a daily sales Excel (Date, Amount) from the Sales tab." : ""}</div>`}
+      ${owner && m ? `<div class="sheet-foot"><button class="btn" data-act="inv-sale" data-id="${m.id}" data-entity="${entityId}">Edit month figures</button></div>` : ""}
+    </div>`;
+  }, { wide: true });
+}
+
 /* ---------------- sales Excel upload ---------------- */
 let salesImp = null, xlsxLib = null;
 const loadReader = () => xlsxLib || (xlsxLib = new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"; s.onload = () => res(window.XLSX); s.onerror = () => { xlsxLib = null; rej(new Error("Couldn't load the Excel reader.")); }; document.head.appendChild(s); }));
 function salesTemplate(e) {
   downloadXlsx(`Sales-template-${e.name.replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-")}.xlsx`, [
     { name: "Sales", columns: ["Month", "Sales", "Expenses", "Net profit", "Note"].map(label => ({ label })), rows: [] },
-    { name: "How to fill", columns: [{ label: "Sales upload", width: 100 }], rows: [["One row per month. Month as MM/YYYY (e.g. 10/2026) or a date in that month."], ["Sales is required. Expenses and Net profit are optional; if Net profit is empty it is worked out as Sales − Expenses."], ["Amounts as plain numbers (950000) or with L / Cr (9.5 L)."], ["A month that already exists is updated with the new figures."]] }
+    { name: "How to fill", columns: [{ label: "Sales upload", width: 100 }], rows: [["One row per month. Month as MM/YYYY (e.g. 10/2026) or a date in that month."], ["Sales is required. Expenses and Net profit are optional; if Net profit is empty it is worked out as Sales − Expenses."], ["Amounts as plain numbers (950000) or with L / Cr (9.5 L)."], ["A month that already exists is updated with the new figures."], ["Have daily sales? Use a sheet with two columns, Date and Amount (one row per day). J. Desk adds up each month for you and lets you see every day."]] }
   ]);
 }
 function salesImport(entityId) {
@@ -456,13 +486,14 @@ function salesImport(entityId) {
     const e = entity(entityId), p = salesImp;
     const exist = new Set(salesOf(entityId).map(s => s.month));
     sh.innerHTML = sheetHead("Upload sales from Excel", esc(e.name)) + `<div class="sh-body">
-      ${!p.rows ? `<p>Fill one row per month: <b>Month, Sales, Expenses, Net profit, Note</b>. <button class="linkbtn" data-act="inv-sales-template" data-entity="${entityId}">${ICON.download} Download template</button></p>
+      ${!p.rows ? `<p>Monthly file: one row per month with <b>Month, Sales, Expenses, Net profit, Note</b>. Daily file: one row per day with <b>Date, Amount</b> — month totals are worked out for you. <button class="linkbtn" data-act="inv-sales-template" data-entity="${entityId}">${ICON.download} Download template</button></p>
         <label class="btn primary block sw-file">${ICON.plus}Choose Excel file<input type="file" id="inv-sales-file" accept=".xlsx,.xls,.csv" hidden></label>
         ${p.errors.length ? `<div class="banner bad">${p.errors.map(esc).join("<br>")}</div>` : ""}` :
-      `<p>${p.rows.length} month(s) ready: <b>${p.rows.filter(r => !exist.has(r.month)).length}</b> new, <b>${p.rows.filter(r => exist.has(r.month)).length}</b> will be updated. Nothing is saved until you confirm.</p>
+      `<p>${p.daily ? `<b>${p.daily.length}</b> days across ` : ""}${p.rows.length} month(s) ready: <b>${p.rows.filter(r => !exist.has(r.month)).length}</b> new, <b>${p.rows.filter(r => exist.has(r.month)).length}</b> will be updated. Nothing is saved until you confirm.</p>
         ${p.errors.length ? `<div class="banner bad"><b>${p.errors.length} row(s) skipped:</b><br>${p.errors.slice(0, 10).map(esc).join("<br>")}</div>` : ""}
-        <div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Month</th><th class="r">Sales</th><th class="r">Expenses</th><th class="r">Net profit</th><th></th></tr></thead><tbody>
-        ${p.rows.map(r => `<tr><td>${monthLabel(r.month, true)}</td><td class="r num">${moneyFull(r.sales, e.currency)}</td><td class="r num">${r.expenses === null ? "—" : moneyFull(r.expenses, e.currency)}</td><td class="r num">${r.net_profit === null ? "—" : moneyFull(r.net_profit, e.currency)}</td><td><small class="faint">${exist.has(r.month) ? "update" : "new"}</small></td></tr>`).join("")}</tbody></table></div>
+        <div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Month</th>${p.daily ? `<th class="r">Days</th>` : ""}<th class="r">Sales</th>${p.daily ? "" : `<th class="r">Expenses</th><th class="r">Net profit</th>`}<th></th></tr></thead><tbody>
+        ${p.rows.map(r => `<tr><td>${monthLabel(r.month, true)}</td>${p.daily ? `<td class="r num">${r.days}</td>` : ""}<td class="r num">${moneyFull(r.sales, e.currency)}</td>${p.daily ? "" : `<td class="r num">${r.expenses == null ? "—" : moneyFull(r.expenses, e.currency)}</td><td class="r num">${r.net_profit == null ? "—" : moneyFull(r.net_profit, e.currency)}</td>`}<td><small class="faint">${exist.has(r.month) ? "update" : "new"}</small></td></tr>`).join("")}</tbody></table></div>
+        ${p.daily ? `<p class="hint">Month totals are set to the sum of the days. Expenses and net profit you've entered are kept.</p>` : ""}
         <div class="sheet-foot"><button class="btn" data-act="inv-sales-reset">Choose another file</button><button class="btn primary block" data-act="inv-sales-confirm">Confirm and save</button></div>`}
     </div>`;
   }, { wide: true, onClose: () => { salesImp = null; } });
@@ -473,6 +504,24 @@ async function readSalesFile(file) {
   const rows = X.utils.sheet_to_json(wb.Sheets[name], { defval: "", raw: true });
   const out = [], errors = [], seen = new Set();
   const get = (r, k) => { const key = Object.keys(r).find(x => x.trim().toLowerCase() === k); return key ? r[key] : ""; };
+  const heads = rows.length ? Object.keys(rows[0]).map(k => k.trim().toLowerCase()) : [];
+  if (heads.includes("date") && (heads.includes("amount") || heads.includes("sales")) && !heads.includes("month")) {
+    // daily file: one row per day → days + month totals
+    const days = [];
+    rows.forEach((r, i) => {
+      const line = i + 2, dv = get(r, "date"), av = heads.includes("amount") ? get(r, "amount") : get(r, "sales");
+      if ((dv === "" || dv === null) && (av === "" || av === null)) return;
+      if (av === "" || av === null) return; // future dates left blank in the sheet
+      const day = parseDate(dv), amount = parseAmount(av);
+      if (!day) return errors.push(`Row ${line}: date "${dv}" not recognised`);
+      if (amount === undefined || amount === null) return errors.push(`Row ${line}: amount "${av}" isn't a number`);
+      if (seen.has(day)) return errors.push(`Row ${line}: ${dmy(day)} appears twice; the first row is used`);
+      seen.add(day); days.push({ day, amount });
+    });
+    const months = {};
+    days.forEach(d => { const m = d.day.slice(0, 8) + "01"; months[m] = (months[m] || { month: m, sales: 0, days: 0 }); months[m].sales = Math.round((months[m].sales + d.amount) * 100) / 100; months[m].days++; });
+    return { daily: days.sort((a, b) => a.day.localeCompare(b.day)), rows: Object.values(months).sort((a, b) => a.month.localeCompare(b.month)), errors };
+  }
   rows.forEach((r, i) => {
     const line = i + 2, mv = get(r, "month");
     if (mv === "" && get(r, "sales") === "") return;
@@ -502,9 +551,10 @@ function exportEntity(id) {
     { name: "Investors", columns: ["Partner", "Capital", "Capital share %", "Equity %", "Returns received", "Recovered %", "Pending", "Invested on", "Note"].map((label, i) => ({ label, money: [1, 4, 6].includes(i) })),
       rows: f.per.map(p => [p.x.name, Number(p.x.amount), p.cap ? p.share : null, p.equity, p.got, p.recovered, p.cap ? p.pending : null, p.x.invested_on ? dmy(p.x.invested_on) : "", p.x.note || ""]) },
     { name: "Sales", columns: ["Month", "Sales", "Expenses", "Net profit", "Margin %", "Note"].map((label, i) => ({ label, money: i >= 1 && i <= 3 })),
-      rows: f.ss.map(s => [monthLabel(s.month, true), Number(s.sales), s.expenses === null ? null : Number(s.expenses), s.net_profit === null ? null : Number(s.net_profit), s.net_profit === null || !Number(s.sales) ? null : pct(s.net_profit, s.sales), s.note || ""]) },
+      rows: f.ss.map(s => [monthLabel(s.month, true), Number(s.sales), s.expenses == null ? null : Number(s.expenses), s.net_profit == null ? null : Number(s.net_profit), s.net_profit == null || !Number(s.sales) ? null : pct(s.net_profit, s.sales), s.note || ""]) },
     { name: "Returns", columns: ["Paid on", "For month", "Investor", "Amount", "Note"].map((label, i) => ({ label, money: i === 3 })),
       rows: f.rs.slice().sort((a, b) => a.paid_on.localeCompare(b.paid_on)).map(r => [dmy(r.paid_on), r.period ? monthLabel(r.period, true) : "", name(r.investor_id), Number(r.amount), r.note || ""]) },
+    { name: "Daily sales", columns: [{ label: "Date" }, { label: "Day" }, { label: "Sales", money: true }], rows: daysOf(id).map(d => [dmy(d.day), WD[new Date(d.day + "T12:00:00Z").getUTCDay()], Number(d.amount)]) },
     { name: "Documents", columns: ["Type", "Title", "For month", "Added"].map(label => ({ label })), rows: docsOf(id).map(d => [DOC_ONE[d.kind], d.title, d.period ? monthLabel(d.period, true) : "", dmy(d.created_at.slice(0, 10))]) }
   ]);
 }
@@ -544,10 +594,17 @@ export async function handleInvClick(act, el) {
     }
     case "inv-sales-import": salesImport(ent); break;
     case "inv-sales-template": salesTemplate(entity(ent)); break;
-    case "inv-sales-reset": salesImp.rows = null; salesImp.errors = []; rerenderSheet(); break;
+    case "inv-sales-reset": salesImp.rows = null; salesImp.daily = null; salesImp.errors = []; rerenderSheet(); break;
+    case "inv-month": monthSheet(ent, el.dataset.month); break;
     case "inv-sales-confirm": {
       busy(el, true, "Saving…");
-      const r = await run(sb.from("inv_sales").upsert(salesImp.rows.map(x => ({ ...x, entity_id: salesImp.entityId })), { onConflict: "entity_id,month" }));
+      if (salesImp.daily) {
+        for (let i = 0; i < salesImp.daily.length; i += 500) {
+          const rd = await run(sb.from("inv_daily_sales").upsert(salesImp.daily.slice(i, i + 500).map(x => ({ ...x, entity_id: salesImp.entityId })), { onConflict: "entity_id,day" }));
+          if (rd.error) { busy(el, false); toastError(rd.error); return true; }
+        }
+      }
+      const r = await run(sb.from("inv_sales").upsert(salesImp.rows.map(x => salesImp.daily ? { entity_id: salesImp.entityId, month: x.month, sales: x.sales } : { ...x, entity_id: salesImp.entityId }), { onConflict: "entity_id,month" }));
       busy(el, false); if (r.error) { toastError(r.error); break; }
       const n = salesImp.rows.length; await loadInv(true); closeSheet(); toast(`Saved ${n} month(s)`); break;
     }
@@ -577,7 +634,7 @@ export async function handleInvChange(e) {
   if (t.id === "inv-ret-year") { inv.ui.retYear = t.value; rerenderPage(); return true; }
   if (t.id === "inv-sales-file" && salesImp) {
     const file = t.files[0]; if (!file) return true;
-    try { const r = await readSalesFile(file); salesImp.rows = r.rows.length ? r.rows : null; salesImp.errors = r.rows.length ? r.errors : (r.errors.length ? r.errors : ["No rows found in the Sales sheet."]); }
+    try { const r = await readSalesFile(file); salesImp.daily = r.daily || null; salesImp.rows = r.rows.length ? r.rows : null; salesImp.errors = r.rows.length ? r.errors : (r.errors.length ? r.errors : ["No rows found in the Sales sheet."]); }
     catch (err) { salesImp.errors = [err.message || "Couldn't read that file."]; }
     rerenderSheet(); return true;
   }

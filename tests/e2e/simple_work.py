@@ -767,7 +767,7 @@ with sync_playwright() as pw:
     # ---------- Investor Portal ----------
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
         DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []
-        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents"]: DB[t] = []
+        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales"]: DB[t] = []
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
         page.goto(BASE + "/#/investors"); page.wait_for_selector('[data-act="inv-new"]', timeout=10000)
@@ -800,6 +800,17 @@ with sync_playwright() as pw:
         check(f"[{tag}] net profit derived (Aug 1.5 L)", "₹1,50,000" in st)
         check(f"[{tag}] chart renders bars", page.locator(".iv-bar path").count() >= 4)
         shot(page, f"{tag}-6-inv-sales", True)
+        page.click('[data-act="inv-sales-import"]'); page.set_input_files("#inv-sales-file", "/tmp/upl/daily.xlsx"); page.wait_for_selector('[data-act="inv-sales-confirm"]', timeout=15000)
+        pv = page.inner_text("#sheet")
+        check(f"[{tag}] daily upload preview: 342 days, 12 months", "342 days across 12 month(s)" in pv, pv[:200])
+        page.click('[data-act="inv-sales-confirm"]'); page.wait_for_selector("#sheetWrap", state="hidden", timeout=15000)
+        check(f"[{tag}] daily rows saved", len(DB["inv_daily_sales"]) == 342, str(len(DB["inv_daily_sales"])))
+        page.select_option("#inv-sales-range", "all"); page.wait_for_timeout(200)
+        page.click('.iv-table tr[data-month="2026-05-01"]'); page.wait_for_selector(".iv-month", timeout=5000)
+        mt = page.inner_text("#sheet")
+        check(f"[{tag}] May 2026 day view: 31 days, total 26.29 L, best day 6 May", "31 days recorded" in mt and "₹26.29 L" in mt and "6 May 2026" in mt, mt[:300])
+        shot(page, f"{tag}-8-inv-month")
+        page.click('#sheet [data-act="close-sheet"]')
         # returns per investor
         page.click('.viewtabs a[href$="/returns"]'); page.wait_for_selector('[data-act="inv-return"]')
         page.click('[data-act="inv-return"]'); page.wait_for_selector("#invRet")
