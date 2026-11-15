@@ -1,6 +1,6 @@
 // Simple work screens (monday.com style): Home → Workspace dashboard → Project board.
 // Model: workspace → project (one job) → tasks → steps (small milestones, each with a status and a responsible person).
-import { esc, fmtDate, todayISO, daysFromToday, ago } from "../util.js";
+import { esc, fmtDate, todayISO, daysFromToday, ago, zonedDate, zonedToISO } from "../util.js";
 import { state, emit, wsById, projectById, canWrite, isWsOwner, activeWorkspaces, nameOf } from "../store.js";
 import { ICON, emptyState, toast, toastError, dialog, openSheet, sheetHead, closeSheet, busy } from "../ui.js";
 import { sb, run, reindex, reopenTask, updateTask } from "../api.js";
@@ -19,7 +19,7 @@ export function taskDone(t) {
   const st = stepsOf(t.id);
   return st.length > 0 && st.every(s => s.status === "done");
 }
-function projectStats(p) {
+export function projectStats(p) {
   const ts = tasksOf(p.id);
   let total = 0, done = 0;
   const pending = [];
@@ -37,7 +37,7 @@ function projectStats(p) {
   else if (done > 0) status = "working";
   return { ts, total, done, pct, pending, next: pending[0] || null, daysLeft, status };
 }
-const STATUS = { closed: "Closed", overdue: "Overdue", ready: "Ready to close", working: "Working on it", not_started: "Not started" };
+export const STATUS = { closed: "Closed", overdue: "Overdue", ready: "Ready to close", working: "Working on it", not_started: "Not started" };
 const statusPill = s => `<span class="sw-pill st-${s}">${STATUS[s]}</span>`;
 const prioPill = p => `<span class="sw-pill pr-${p}">${PRIO[p] || p}</span>`;
 function deadlineText(p, daysLeft) {
@@ -103,7 +103,7 @@ export function renderSimpleWorkspace(view, wsId) {
   const tile = (k, label, n, cls = "") => `<button class="sw-kpi ${cls} ${f === k ? "on" : ""}" data-act="sw-filter" data-ws="${wsId}" data-k="${k}"><b class="num">${n}</b><span>${label}</span></button>`;
   view.innerHTML = `<div class="sw">
     <div class="sw-head" style="--c:${esc(w.color)}"><div><p class="crumb"><a href="#/home">Home</a></p><h1><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</h1><p class="sub">As of ${fmtDate(today(), { day: "numeric", month: "short", year: "numeric" })}</p></div>
-      <div class="sw-actions">${writable ? `<button class="btn primary" data-act="sw-new-project" data-ws="${wsId}">${ICON.plus}New project</button>` : ""}<button class="btn" data-act="edit-workspace" data-id="${wsId}">${ICON.settings}Settings</button>${isWsOwner(wsId) ? `<button class="btn danger" data-act="ws-delete" data-id="${wsId}">${ICON.trash}Delete workspace</button>` : ""}</div></div>
+      <div class="sw-actions">${writable ? `<button class="btn primary" data-act="sw-new-project" data-ws="${wsId}">${ICON.plus}New project</button><button class="btn" data-act="swx-open-import" data-ws="${wsId}">${ICON.download}Import</button>` : ""}<button class="btn" data-act="swx-open-export" data-ws="${wsId}">${ICON.download}Download Excel</button><button class="btn" data-act="edit-workspace" data-id="${wsId}">${ICON.settings}Settings</button>${isWsOwner(wsId) ? `<button class="btn danger" data-act="ws-delete" data-id="${wsId}">${ICON.trash}Delete workspace</button>` : ""}</div></div>
     <div class="sw-kpis">${tile("open", "Open projects", c.open)}${tile("closed", "Closed projects", c.closed)}${tile("critical", "Critical", c.critical, "crit")}${tile("overdue", "Overdue", c.overdue, "bad")}</div>
     <section class="sw-sect"><div class="sw-sect-h"><h2>${{ open: "Open projects", closed: "Closed projects", critical: "Critical projects", overdue: "Overdue projects", all: "All projects" }[f]}</h2>${f !== "all" ? `<button class="linkbtn" data-act="sw-filter" data-ws="${wsId}" data-k="all">Show all</button>` : ""}</div>
     <div class="sw-table">
@@ -144,7 +144,7 @@ export function renderSimpleProject(view, pid) {
     </div>
     <section class="sw-sect"><div class="sw-sect-h"><h2>Tasks <span class="c">${s.ts.length}</span></h2>${s.ts.length ? `<button class="linkbtn" data-act="sw-expand" data-id="${p.id}">${s.ts.every(t => open.has(t.id)) ? "Collapse all" : "Expand all"}</button>` : ""}</div>
       ${s.ts.map(t => taskGroup(t, open.has(t.id), writable)).join("") || `<div class="sw-empty">No tasks yet. Add each thing that has to be closed for this job, e.g. "Close PO-0586".</div>`}
-      ${writable && !isClosedP(p) ? `<form class="sw-add sw-add-task" data-form="sw-add-task" data-project="${p.id}"><span>${ICON.plus}</span><input class="input" name="title" placeholder="Add a task, e.g. Close PO-0586" maxlength="300" autocomplete="off"><input class="input sw-ref" name="ref" placeholder="Ref (PO / invoice no.)" maxlength="60" autocomplete="off"><button class="btn sm">Add task</button></form>` : ""}
+      ${writable && !isClosedP(p) ? `<form class="sw-add sw-add-task" data-form="sw-add-task" data-project="${p.id}"><span>${ICON.plus}</span><input class="input" name="title" placeholder="Add a task, e.g. Close PO-0586" maxlength="300" autocomplete="off"><input class="input sw-ref" name="ref" placeholder="Ref (PO / invoice no.)" maxlength="60" autocomplete="off"><input class="input sw-date" type="date" name="due" title="Task deadline (optional)" aria-label="Task deadline"><button class="btn sm">Add task</button></form>` : ""}
     </section>
   </div>`;
 }
@@ -154,7 +154,7 @@ function taskGroup(t, isOpen, writable) {
   return `<div class="sw-task ${done ? "done" : ""} ${isOpen ? "open" : ""}">
     <div class="sw-task-h" data-act="sw-toggle-task" data-id="${t.id}" role="button" tabindex="0">
       <span class="sw-chev">${ICON.chevron}</span>
-      <span class="sw-tt"><b>${esc(t.title)}</b>${t.reference ? `<small class="num">${esc(t.reference)}</small>` : ""}</span>
+      <span class="sw-tt"><b>${esc(t.title)}</b>${t.reference || t.due_at ? `<small>${t.reference ? `<span class="num">${esc(t.reference)}</span>` : ""}${t.reference && t.due_at ? " · " : ""}${t.due_at ? taskDue(t, done) : ""}</small>` : ""}</span>
       <span class="sw-tmeta">${!isOpen && pending ? `<span class="sw-next">${esc(pending.title)}${pending.responsible ? ` <span class="sw-who">${esc(pending.responsible)}</span>` : ""}</span>` : ""}
         ${st.length ? `<span class="num faint">${n}/${st.length}</span>` : ""}<span class="sw-pill ${done ? "st-ready" : n ? "st-working" : "st-not_started"}">${done ? "Done" : n ? "In progress" : "Pending"}</span></span>
       ${writable ? `<button class="iconbtn sm" data-act="sw-task-menu" data-id="${t.id}" aria-label="Edit task" title="Edit task">${ICON.more}</button><button class="iconbtn sm sw-del" data-act="sw-task-delete" data-id="${t.id}" aria-label="Delete task" title="Delete task">${ICON.trash}</button>` : ""}
@@ -171,6 +171,13 @@ function taskGroup(t, isOpen, writable) {
       ${writable ? `<form class="sw-add sw-add-step" data-form="sw-add-step" data-task="${t.id}"><span>${ICON.plus}</span><input class="input" name="title" placeholder="Add a step, e.g. Waiting for shipment arrival" maxlength="300" autocomplete="off"><input class="input sw-ref" name="who" placeholder="Responsible" maxlength="80" list="sw-people" autocomplete="off"><button class="btn sm">Add</button></form>${peopleList()}` : ""}
     </div>` : ""}
   </div>`;
+}
+function taskDue(t, done) {
+  const d = zonedDate(t.due_at, state.tz), n = daysFromToday(d, state.tz), txt = "Due " + fmtDate(d, { day: "numeric", month: "short" });
+  if (done) return `<span class="faint">${txt}</span>`;
+  if (n < 0) return `<span class="bad-text">${txt} · ${-n}d late</span>`;
+  if (n <= 2) return `<span class="warn-text">${txt}${n === 0 ? " · today" : n === 1 ? " · tomorrow" : ""}</span>`;
+  return `<span class="faint">${txt}</span>`;
 }
 function peopleList() {
   const names = new Set();
@@ -189,10 +196,10 @@ async function addProject(wsId, name) {
   state.projects.push(r.data); refresh();
   location.hash = "#/p/" + r.data.id;
 }
-async function addTask(pid, title, ref) {
+async function addTask(pid, title, ref, due) {
   const p = projectById(pid);
   const max = Math.max(0, ...tasksOf(pid).map(t => Number(t.sort) || 0));
-  const r = await run(sb.from("tasks").insert({ workspace_id: p.workspace_id, project_id: pid, title, reference: ref || null, status: "not_started", priority: p.priority === "critical" ? "critical" : "medium", owner_id: state.user.id, sort: max + 1 }).select().single());
+  const r = await run(sb.from("tasks").insert({ workspace_id: p.workspace_id, project_id: pid, title, reference: ref || null, due_at: due ? zonedToISO(due, "23:59", state.tz) : null, due_all_day: true, status: "not_started", priority: p.priority === "critical" ? "critical" : "medium", owner_id: state.user.id, sort: max + 1 }).select().single());
   if (r.error) return toastError(r.error);
   state.tasks.push(r.data); state.ui.openTasks.add(r.data.id); refresh();
   setTimeout(() => { const i = document.querySelector(`[data-form="sw-add-step"][data-task="${r.data.id}"] input[name=title]`); if (i) i.focus(); }, 30);
@@ -217,7 +224,7 @@ export async function handleSimpleSubmit(form) {
   const btn = form.querySelector("button");
   const v = n => (form.elements[n] ? form.elements[n].value.trim() : "");
   if (kind === "sw-add-project") { if (!v("name")) return true; busy(btn); await addProject(form.dataset.ws, v("name")); busy(btn, false); }
-  if (kind === "sw-add-task") { if (!v("title")) return true; busy(btn); await addTask(form.dataset.project, v("title"), v("ref")); busy(btn, false); }
+  if (kind === "sw-add-task") { if (!v("title")) return true; busy(btn); await addTask(form.dataset.project, v("title"), v("ref"), v("due")); busy(btn, false); }
   if (kind === "sw-add-step") { if (!v("title")) return true; busy(btn); await addStep(form.dataset.task, v("title"), v("who")); busy(btn, false); }
   if (kind === "sw-project") { busy(btn); await saveProject(form); busy(btn, false); }
   return true;
@@ -274,14 +281,18 @@ async function taskMenu(id) {
   openSheet(sh => {
     sh.innerHTML = sheetHead("Task") + `<form class="sh-body" id="swTaskForm">
       <label class="field"><span>Task</span><input class="input" name="title" value="${esc(t.title)}" maxlength="300" required></label>
-      <label class="field"><span>Reference (PO / invoice no.)</span><input class="input" name="ref" value="${esc(t.reference || "")}" maxlength="60"></label>
+      <div class="grid2"><label class="field"><span>Reference (PO / invoice no.)</span><input class="input" name="ref" value="${esc(t.reference || "")}" maxlength="60"></label>
+      <label class="field"><span>Deadline</span><input class="input" type="date" name="due" value="${t.due_at ? zonedDate(t.due_at, state.tz) : ""}"></label></div>
       <label class="field"><span>Notes</span><textarea class="input" name="desc" rows="3">${esc(t.description || "")}</textarea></label>
       ${!st.length ? `<label class="check"><input type="checkbox" name="done" ${t.status === "completed" ? "checked" : ""}> Task is done</label>` : `<p class="hint">This task is done when all its ${st.length} steps are done.</p>`}
       <div class="sheet-foot"><button type="button" class="btn danger" id="swTaskDel">${ICON.trash}Delete</button><button class="btn primary block">Save</button></div></form>`;
     sh.querySelector("#swTaskForm").onsubmit = async e => {
       e.preventDefault(); e.stopPropagation();
       const f = e.target, b = f.querySelector(".primary"); busy(b);
-      let r = await updateTask(id, { title: f.title.value.trim(), reference: f.ref.value.trim() || null, description: f.desc.value.trim() || null });
+      const due = f.due.value ? zonedToISO(f.due.value, "23:59", state.tz) : null;
+      const patch = { title: f.title.value.trim(), reference: f.ref.value.trim() || null, description: f.desc.value.trim() || null };
+      if ((t.due_at ? zonedDate(t.due_at, state.tz) : "") !== f.due.value) Object.assign(patch, { due_at: due, due_all_day: true });
+      let r = await updateTask(id, patch);
       if (!r.error && f.done) {
         if (f.done.checked && t.status !== "completed") r = await updateTask(id, { status: "completed" });
         else if (!f.done.checked && t.status === "completed") r = await reopenTask(id, "Reopened from project board", "not_started");

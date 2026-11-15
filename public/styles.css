@@ -1020,3 +1020,17 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .sw-del:hover { color: var(--bad); }
 .sw-step { grid-template-columns: auto minmax(0, 1fr) auto auto auto; }
 @media (max-width: 860px) { .sw-step { grid-template-columns: auto minmax(0, 1fr) auto auto; } }
+.sw-add .sw-date { flex: 0 0 150px; }
+.sw-choice { display: grid; gap: 8px; margin-top: 10px; }
+.sw-choice .btn { justify-content: space-between; min-height: 46px; }
+.sw-steps-help { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 8px; }
+.sw-steps-help .linkbtn { display: inline-flex; gap: 4px; align-items: center; }
+.sw-steps-help svg { width: 15px; height: 15px; }
+.sw-file { cursor: pointer; }
+.sw-prev { display: grid; gap: 10px; margin: 12px 0; }
+.sw-prev-p { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; display: grid; gap: 8px; }
+.sw-prev-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sw-prev-t { padding-left: 10px; border-left: 3px solid var(--line-2); display: grid; gap: 3px; }
+.sw-prev-s { font-size: .86rem; color: var(--ink-2); padding-left: 6px; }
+.banner.bad { margin: 8px 0; }
+@media (max-width: 860px) { .sw-add .sw-date { flex: 1 1 140px; } }

@@ -11,6 +11,7 @@ from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PUB = os.path.join(ROOT, "public")
 UMD = os.path.join(ROOT, "node_modules/@supabase/supabase-js/dist/umd/supabase.js")
+XLSX = os.path.join(ROOT, "node_modules/xlsx/dist/xlsx.full.min.js")
 SHOTS = sys.argv[sys.argv.index("--shots") + 1] if "--shots" in sys.argv else None
 if SHOTS: os.makedirs(SHOTS, exist_ok=True)
 
@@ -98,7 +99,7 @@ def health():
         status = "blocked" if any(m["is_critical"] for m in late) else "at_risk" if late else "on_track"
         nxt = next((m for m in sorted(ms, key=lambda m: m["planned_date"] or "9") if not m["actual_date"]), None)
         out.append({"project_id": p["id"], "workspace_id": p["workspace_id"], "progress": round(100 * wd / wt) if wt else None, "progress_basis": "milestones" if ms else "none",
-                    "calculated_status": status, "effective_status": p["manual_status"] or status, "reasons": [f"{len(late)} critical milestone(s) overdue"] if late else [],
+                    "calculated_status": status, "effective_status": p.get("manual_status") or status, "reasons": [f"{len(late)} critical milestone(s) overdue"] if late else [],
                     "next_milestone_title": nxt and nxt["title"], "next_milestone_date": nxt and nxt["planned_date"], "task_total": len(ts), "task_open": len([t for t in ts if t["status"] not in ("completed", "cancelled")])})
     return out
 
@@ -647,7 +648,7 @@ def new_page(browser, w, h, scheme="light"):
     page = ctx.new_page()
     page.on("pageerror", lambda e: errors.append("pageerror: " + str(e)))
     page.on("console", lambda m: errors.append("console: " + m.text) if m.type == "error" and "ERR_FAILED" not in m.text and "WebSocket" not in m.text and "websocket" not in m.text else None)
-    page.route("https://cdn.jsdelivr.net/**", lambda r: r.fulfill(path=UMD, content_type="application/javascript"))
+    page.route("https://cdn.jsdelivr.net/**", lambda r: r.fulfill(path=(XLSX if "xlsx" in r.request.url else UMD), content_type="application/javascript"))
     page.route(re.compile(r"https://fonts\.(googleapis|gstatic)\.com/.*"), lambda r: r.abort())
     page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle)
     page.add_init_script(f"localStorage.setItem('sb-lvusersarnzzamdgvxgm-auth-token', {json.dumps(json.dumps(session))})")
@@ -661,12 +662,15 @@ _orig_handle = handle
 def handle2(route):
     req = route.request; u = urlparse(req.url)
     if u.path == "/rest/v1/task_steps" and req.method in ("POST", "PATCH"):
-        body = json.loads(req.post_data or "{}")
-        st = body.get("status")
-        if st == "done": body["done_at"] = iso(dt.datetime.now(dt.timezone.utc))
-        elif st == "pending": body["done_at"] = None
-        if req.method == "POST": body = {"status": "pending", "sort": 0, "note": None, "done_at": None, "updated_by": ME, **body}
-        body["updated_at"] = iso(dt.datetime.now(dt.timezone.utc))
+        raw = json.loads(req.post_data or "{}")
+        def fix(body):
+            st = body.get("status")
+            if st == "done": body["done_at"] = iso(dt.datetime.now(dt.timezone.utc))
+            elif st == "pending": body["done_at"] = None
+            if req.method == "POST": body = {"status": "pending", "sort": 0, "note": None, "done_at": None, "updated_by": ME, **body}
+            if body.get("status") == "done" and not body.get("done_at"): body["done_at"] = iso(dt.datetime.now(dt.timezone.utc))
+            body["updated_at"] = iso(dt.datetime.now(dt.timezone.utc)); return body
+        body = [fix(b) for b in raw] if isinstance(raw, list) else fix(raw)
         return route.continue_() if False else _fake(route, body)
     return _orig_handle(route)
 def _fake(route, body):
@@ -720,6 +724,28 @@ with sync_playwright() as pw:
         page.click(".crumb a >> nth=1"); page.wait_for_selector(".sw-table")
         check(f"[{tag}] workspace counts 1 critical", page.locator('.sw-kpi.crit b').inner_text() == "1")
         shot(page, f"{tag}-2-workspace", True)
+        # export all → re-import into another workspace (round trip), template download
+        page.click('[data-act="swx-open-export"]'); page.wait_for_selector('[data-act="swx-export"][data-k="all"]')
+        with page.expect_download() as dl: page.click('[data-act="swx-export"][data-k="all"]')
+        xf = os.path.join("/tmp", f"{tag}-export.xlsx"); dl.value.save_as(xf)
+        check(f"[{tag}] excel export downloads", os.path.getsize(xf) > 1000 and dl.value.suggested_filename.startswith("QCLOUD-all-projects"), dl.value.suggested_filename)
+        page.click('[data-act="swx-open-import"]'); page.wait_for_selector('[data-act="swx-template"]')
+        with page.expect_download() as dl2: page.click('[data-act="swx-template"]')
+        check(f"[{tag}] template downloads", "import-template" in dl2.value.suggested_filename)
+        page.click('#sheet [data-act="close-sheet"]')
+        page.goto(BASE + "/#/w/" + WS[0]); page.wait_for_selector(".sw-table")
+        page.click('[data-act="swx-open-import"]'); page.set_input_files("#swx-file", xf); page.wait_for_selector(".sw-prev", timeout=10000)
+        txt = page.inner_text("#sheet")
+        check(f"[{tag}] import preview shows projects before saving", "Pending POs" in txt and "Followed up with freight forwarder" in txt and "New project" in txt, txt[:300])
+        before = len([p for p in DB["projects"] if p["workspace_id"] == WS[0]])
+        check(f"[{tag}] nothing saved before confirm", before == 0)
+        shot(page, f"{tag}-4-import-preview")
+        page.click('[data-act="swx-confirm"]'); page.wait_for_selector("#sheetWrap", state="hidden")
+        newp = [p for p in DB["projects"] if p["workspace_id"] == WS[0]]
+        steps0 = [x for x in DB["task_steps"] if x["workspace_id"] == WS[0]]
+        check(f"[{tag}] import created projects, tasks and steps", len(newp) == 2 and len(steps0) == 1, f"{len(newp)} projects, {len(steps0)} steps")
+        check(f"[{tag}] imported deadline + priority kept", any(p["target_date"] == "2026-12-10" and p["priority"] == "critical" for p in newp), str([(p["name"], p["target_date"], p["priority"]) for p in newp]))
+        page.goto(BASE + "/#/w/" + WS[1]); page.wait_for_selector(".sw-table")
         page.click('.sw-tr:has-text("Pending POs")'); page.wait_for_selector('[data-act="sw-close-project"]')
         page.click('[data-act="sw-close-project"]'); page.click('#dialog [data-r="1"]'); page.wait_for_selector('[data-act="sw-reopen-project"]')
         page.click(".crumb a >> nth=1"); page.wait_for_selector(".sw-table")

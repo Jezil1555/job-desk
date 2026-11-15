@@ -30,6 +30,7 @@ import { openNote, openDocument, handleKnowledgeClick, handleKnowledgeSubmit, ha
 import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./views/tasks.js";
 import { renderWall, enterWall, leaveWall, handleWallClick, handleWallKey } from "./views/wall.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
+import { handleIoClick, handleIoChange } from "./views/simpleio.js";
 import { renderSimpleHome, renderSimpleWorkspace, renderSimpleProject, handleSimpleClick, handleSimpleSubmit, simpleCapture } from "./views/simple.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
 
@@ -137,6 +138,7 @@ document.addEventListener("click", async e => {
   if (el.tagName === "A" && !["apply-view", "close-sheet", "filter-ws"].includes(act)) e.preventDefault();
   if (act === "open-task" && e.target.closest("[data-act]") !== el) return;
   if (await handleSimpleClick(act, el)) return;
+  if (await handleIoClick(act, el)) return;
   if (await handleCaptureClick(act, el)) return;
   if (await handleTaskClick(act, el)) return;
   if (await handleFormClick(act, el)) return;
@@ -196,6 +198,7 @@ document.addEventListener("keydown", e => {
   if ((e.key === "Enter" || e.key === " ") && document.activeElement.dataset && document.activeElement.dataset.act && document.activeElement.getAttribute("role") === "button") { e.preventDefault(); document.activeElement.click(); }
 });
 document.addEventListener("change", async e => {
+  if (await handleIoChange(e)) return;
   if (handleCaptureChange(e)) return;
   if (handleTaskChange(e)) return;
   if (await handleContactSelect(e)) return;
