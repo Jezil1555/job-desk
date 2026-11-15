@@ -984,12 +984,6 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .sw-check.on { background: var(--ok); border-color: var(--ok); color: #fff; }
 .sw-check svg { width: 15px; height: 15px; stroke-width: 2.6; }
 .sw-steps .sw-add { padding-left: 40px; }
-.sw-feed { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
-.sw-feed li { display: flex; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); }
-.sw-feed li:first-child { border-top: 0; }
-.sw-feed li i { color: var(--warn); } .sw-feed li.done i { color: var(--ok); }
-.sw-feed li i svg { width: 18px; height: 18px; }
-.sw-feed small { display: block; color: var(--muted); font-size: .78rem; }
 .sw-wsgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .sw-ws { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-top: 4px solid var(--c); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); text-decoration: none; }
 .sw-ws:hover { border-color: var(--line-2); border-top-color: var(--c); text-decoration: none; box-shadow: var(--shadow); }

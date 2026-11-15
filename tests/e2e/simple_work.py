@@ -704,7 +704,7 @@ with sync_playwright() as pw:
         page.click(".sw-step >> nth=1 >> .sw-check"); page.wait_for_selector(".sw-step.done")
         check(f"[{tag}] ticking a step marks it done", page.locator(".sw-step.done").count() == 1)
         check(f"[{tag}] progress shows 1/2", "1/2" in page.inner_text(".sw-pk"))
-        check(f"[{tag}] updates feed lists the step", "Followed up with freight forwarder" in page.inner_text(".sw-feed"))
+        check(f"[{tag}] no updates list on the project page", page.locator(".sw-feed").count() == 0)
         # deadline + critical via edit sheet
         page.click('[data-act="sw-edit-project"]'); page.wait_for_selector('[data-form="sw-project"]')
         page.select_option('[data-form="sw-project"] select[name=priority]', "critical"); page.fill('[data-form="sw-project"] input[name=target]', "2026-12-10")

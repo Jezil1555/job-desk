@@ -132,7 +132,6 @@ export function renderSimpleProject(view, pid) {
   if (!p) { view.innerHTML = emptyState("Project not found", "It may have been deleted.", `<a class="btn" href="#/home">Home</a>`); return; }
   const w = wsById(p.workspace_id), s = projectStats(p), writable = canWrite(p.workspace_id);
   const open = state.ui.openTasks || (state.ui.openTasks = new Set());
-  const updates = s.ts.flatMap(t => stepsOf(t.id).map(st => ({ st, t }))).sort((a, b) => b.st.updated_at.localeCompare(a.st.updated_at)).slice(0, 10);
   view.innerHTML = `<div class="sw">
     <div class="sw-head"><div><p class="crumb"><a href="#/home">Home</a> / <a href="#/w/${w.id}">${esc(w.name)}</a></p>
       <h1>${esc(p.name)}</h1>${p.description ? `<p class="sub">${esc(p.description)}</p>` : ""}</div>
@@ -146,9 +145,6 @@ export function renderSimpleProject(view, pid) {
     <section class="sw-sect"><div class="sw-sect-h"><h2>Tasks <span class="c">${s.ts.length}</span></h2>${s.ts.length ? `<button class="linkbtn" data-act="sw-expand" data-id="${p.id}">${s.ts.every(t => open.has(t.id)) ? "Collapse all" : "Expand all"}</button>` : ""}</div>
       ${s.ts.map(t => taskGroup(t, open.has(t.id), writable)).join("") || `<div class="sw-empty">No tasks yet. Add each thing that has to be closed for this job, e.g. "Close PO-0586".</div>`}
       ${writable && !isClosedP(p) ? `<form class="sw-add sw-add-task" data-form="sw-add-task" data-project="${p.id}"><span>${ICON.plus}</span><input class="input" name="title" placeholder="Add a task, e.g. Close PO-0586" maxlength="300" autocomplete="off"><input class="input sw-ref" name="ref" placeholder="Ref (PO / invoice no.)" maxlength="60" autocomplete="off"><button class="btn sm">Add task</button></form>` : ""}
-    </section>
-    <section class="sw-sect"><h2>Latest updates</h2>
-      ${updates.length ? `<ul class="sw-feed">${updates.map(({ st, t }) => `<li class="${st.status}"><i>${st.status === "done" ? ICON.check : ICON.clock}</i><div><b>${esc(st.title)}</b> — ${st.status === "done" ? "done" : "pending"}${st.responsible ? ` · ${esc(st.responsible)}` : ""}<small>${esc(t.title)}${t.reference ? " · " + esc(t.reference) : ""} · ${ago(st.updated_at)}${st.updated_by ? " by " + esc(nameOf(st.updated_by)) : ""}</small></div></li>`).join("")}</ul>` : `<p class="hint">Updates appear here as steps are added and ticked off.</p>`}
     </section>
   </div>`;
 }
