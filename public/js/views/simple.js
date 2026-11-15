@@ -356,6 +356,7 @@ async function deleteProject(id) {
 export async function simpleCapture() {
   const r = state.route || {};
   if (r.name === "finance" || r.name === "personal" || r.name === "notes" || r.name === "goals") return false;
+  if (r.name === "investors") { const b = document.querySelector('[data-act="inv-new"], [data-act="inv-return"], [data-act="inv-sale"][data-entity]:not([data-id])'); if (b) b.click(); return true; }
   if (r.name === "p" && !r.b) {
     const i = document.querySelector('[data-form="sw-add-task"] input[name=title]');
     if (i) { i.scrollIntoView({ block: "center" }); i.focus(); return true; }

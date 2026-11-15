@@ -10,6 +10,7 @@ export const ICON = {
   tasks: P('<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M3.8 6.5l1.2 1.2 2-2.2M3.8 12l1.2 1.2 2-2.2M3.8 17.5l1.2 1.2 2-2.2"/>'),
   folder: P('<path d="M3.5 7.5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2h-13a2 2 0 01-2-2z"/>'),
   calendar: P('<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/>'),
+  invest: P('<path d="M12 3.5v8.5h8.5"/><path d="M19.6 15.5A8.5 8.5 0 1 1 8.5 4.2"/>'),
   finance: P('<path d="M4 19.5h16M6 16V11M10 16V8M14 16v-6M18 16V6"/>'),
   goals: P('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".9" fill="currentColor"/>'),
   notes: P('<path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M9 12h6M9 15.5h6"/>'),

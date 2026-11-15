@@ -122,12 +122,12 @@ def handle(route):
     def reply(body, status=200): route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
     def err(msg): reply({"code": "P0001", "message": msg, "details": None, "hint": None}, 400)
     if path.startswith("/auth/v1/"): return reply({"id": ME, "email": "jezz@example.com"})
-    m_sign = re.match(r"^/storage/v1/object/sign/(documents|finance)/(.+)$", path)
+    m_sign = re.match(r"^/storage/v1/object/sign/(documents|finance|investor)/(.+)$", path)
     if m_sign:
         key = unquote(m_sign.group(2))
         if key not in STORAGE: return reply({"statusCode": "404", "error": "not_found", "message": "Object not found"}, 400)
         return reply({"signedURL": f"/object/sign/{m_sign.group(1)}/{key}?token=test"})
-    m_up = re.match(r"^/storage/v1/object/(documents|finance)/(.+)$", path)
+    m_up = re.match(r"^/storage/v1/object/(documents|finance|investor)/(.+)$", path)
     if m_up and req.method == "POST":
         key = unquote(m_up.group(2)); STORAGE[key] = len(req.post_data_buffer or b"")
         return reply({"Key": m_up.group(1) + "/" + key, "Id": str(uuid.uuid4())})
@@ -672,6 +672,12 @@ def handle2(route):
             body["updated_at"] = iso(dt.datetime.now(dt.timezone.utc)); return body
         body = [fix(b) for b in raw] if isinstance(raw, list) else fix(raw)
         return route.continue_() if False else _fake(route, body)
+    if u.path == "/rest/v1/inv_entities" and req.method == "POST":
+        body = json.loads(req.post_data); body = {"archived": False, "sort": 0, "description": None, "start_date": None, "owner_id": ME, **body}
+        r = _fake(route, body)
+        e = DB["inv_entities"][-1]; DB.setdefault("inv_members", []).append({"entity_id": e["id"], "user_id": ME, "role": "owner"})
+        return r
+    if u.path == "/rest/v1/rpc/inv_member_list": return route.fulfill(status=200, content_type="application/json", body=json.dumps([{"user_id": ME, "role": "owner", "email": "jezz@example.com", "display_name": "Jezz"}]))
     return _orig_handle(route)
 def _fake(route, body):
     class R:  # re-dispatch with the enriched body
@@ -757,6 +763,62 @@ with sync_playwright() as pw:
         check(f"[{tag}] workspace delete button visible", page.locator('[data-act="ws-delete"]').count() == 1)
         page.click('[data-act="ws-delete"]'); page.fill("#dlgIn", "QCLOUD"); page.click('#dialog [data-r="1"]'); page.wait_for_selector(".sw-wsgrid")
         check(f"[{tag}] workspace delete goes back home", "#/home" in page.url)
+        ctx.close()
+    # ---------- Investor Portal ----------
+    for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
+        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []
+        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents"]: DB[t] = []
+        ctx, page = new_page(b, w, h)
+        page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
+        page.goto(BASE + "/#/investors"); page.wait_for_selector('[data-act="inv-new"]', timeout=10000)
+        page.click('[data-act="inv-new"] >> nth=0'); page.wait_for_selector("#invNew")
+        page.fill("#invNew [name=name]", "The Burgery In - Kakkanad"); page.fill("#invNew [name=cost]", "1.05 Cr")
+        page.fill("#invNew [name=investors]", "Steeja 35 L\nJezil 35 lakhs\nNihan 35L"); page.fill("#invNew [name=me]", "Jezil")
+        page.click("#invNew .btn.primary"); page.wait_for_selector(".iv-kpis", timeout=10000)
+        txt = page.inner_text("#view")
+        check(f"[{tag}] entity deck shows project cost 1.05 Cr", "₹1.05 Cr" in txt, txt[:200])
+        check(f"[{tag}] three investors at 33.3% each", txt.count("33.3%") >= 3 and "₹35,00,000" in txt)
+        check(f"[{tag}] my position card", page.locator(".iv-me").count() == 1)
+        # sales: add a month, then Excel upload
+        page.click('.viewtabs a[href$="/sales"]'); page.wait_for_selector('[data-act="inv-sale"]')
+        page.click('[data-act="inv-sale"]'); page.wait_for_selector("#invSale")
+        page.fill("#invSale [name=month]", "2026-10"); page.fill("#invSale [name=sales]", "9.5 L"); page.fill("#invSale [name=exp]", "800000")
+        page.click("#invSale .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
+        page.click('[data-act="inv-sales-import"]'); page.set_input_files("#inv-sales-file", "/tmp/sales-upload.xlsx"); page.wait_for_selector('[data-act="inv-sales-confirm"]', timeout=10000)
+        check(f"[{tag}] sales upload preview lists 3 months", "3 month(s) ready" in page.inner_text("#sheet"), page.inner_text("#sheet")[:200])
+        page.click('[data-act="inv-sales-confirm"]'); page.wait_for_selector("#sheetWrap", state="hidden")
+        page.select_option("#inv-sales-range", "all"); page.wait_for_timeout(200)
+        st = page.inner_text("#view")
+        check(f"[{tag}] sales total 35.7 L across 4 months", "₹35.7 L" in st and "4 months" in st, st[:400])
+        check(f"[{tag}] net profit derived (Aug 1.5 L)", "₹1,50,000" in st)
+        check(f"[{tag}] chart renders bars", page.locator(".iv-bar path").count() >= 4)
+        shot(page, f"{tag}-6-inv-sales", True)
+        # returns per investor
+        page.click('.viewtabs a[href$="/returns"]'); page.wait_for_selector('[data-act="inv-return"]')
+        page.click('[data-act="inv-return"]'); page.wait_for_selector("#invRet")
+        inputs = page.locator("#invRet .iv-retline input")
+        inputs.nth(0).fill("50000"); inputs.nth(1).fill("50000"); inputs.nth(2).fill("45000")
+        page.click("#invRet .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
+        rt = page.inner_text("#view")
+        check(f"[{tag}] three return payments recorded", len(DB["inv_returns"]) == 3 and "₹1,45,000" in rt, rt[:300])
+        page.select_option("#inv-ret-who", label="Nihan"); page.wait_for_timeout(200)
+        check(f"[{tag}] investor filter", "₹45,000" in page.inner_text(".iv-table") and "₹50,000" not in page.inner_text(".iv-table"))
+        # document upload
+        page.click('.viewtabs a[href$="/documents"]'); page.wait_for_selector('[data-act="inv-doc-new"]')
+        page.click('[data-act="inv-doc-new"] >> nth=0'); page.wait_for_selector("#invDoc")
+        page.select_option("#invDoc [name=kind]", "contract"); page.set_input_files("#invDoc [name=file]", "/tmp/sales-upload.xlsx"); page.fill("#invDoc [name=title]", "Partnership agreement")
+        page.click("#invDoc .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
+        check(f"[{tag}] contract uploaded and listed", "Partnership agreement" in page.inner_text("#view") and len(DB["inv_documents"]) == 1)
+        page.click('.viewtabs a[href$="/overview"]'); page.wait_for_selector(".iv-kpis")
+        ov = page.inner_text("#view")
+        check(f"[{tag}] overview: returns 1.45 L, pending 103.55 L", "₹1.45 L" in ov and "₹1.04 Cr" in ov, ov[:500])
+        with page.expect_download() as dl: page.click('[data-act="inv-export"]')
+        check(f"[{tag}] investor Excel downloads", dl.value.suggested_filename.endswith(".xlsx"))
+        shot(page, f"{tag}-5-inv-overview", True)
+        page.click('.viewtabs a[href$="/settings"]'); page.wait_for_selector("#inv-share-form")
+        check(f"[{tag}] settings shows sharing", "Shared with" in page.inner_text("#view"))
+        page.goto(BASE + "/#/investors"); page.wait_for_selector(".iv-card")
+        shot(page, f"{tag}-7-inv-list", True)
         ctx.close()
     b.close()
 fails = [r for r in results if not r[1]]
