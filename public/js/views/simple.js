@@ -1,7 +1,7 @@
 // Simple work screens (monday.com style): Home → Workspace dashboard → Project board.
 // Model: workspace → project (one job) → tasks → steps (small milestones, each with a status and a responsible person).
 import { esc, fmtDate, todayISO, daysFromToday, ago } from "../util.js";
-import { state, emit, wsById, projectById, canWrite, activeWorkspaces, nameOf } from "../store.js";
+import { state, emit, wsById, projectById, canWrite, isWsOwner, activeWorkspaces, nameOf } from "../store.js";
 import { ICON, emptyState, toast, toastError, dialog, openSheet, sheetHead, closeSheet, busy } from "../ui.js";
 import { sb, run, reindex, reopenTask, updateTask } from "../api.js";
 
@@ -103,7 +103,7 @@ export function renderSimpleWorkspace(view, wsId) {
   const tile = (k, label, n, cls = "") => `<button class="sw-kpi ${cls} ${f === k ? "on" : ""}" data-act="sw-filter" data-ws="${wsId}" data-k="${k}"><b class="num">${n}</b><span>${label}</span></button>`;
   view.innerHTML = `<div class="sw">
     <div class="sw-head" style="--c:${esc(w.color)}"><div><p class="crumb"><a href="#/home">Home</a></p><h1><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</h1><p class="sub">As of ${fmtDate(today(), { day: "numeric", month: "short", year: "numeric" })}</p></div>
-      <div class="sw-actions">${writable ? `<button class="btn primary" data-act="sw-new-project" data-ws="${wsId}">${ICON.plus}New project</button>` : ""}<button class="btn" data-act="edit-workspace" data-id="${wsId}">${ICON.people}People</button></div></div>
+      <div class="sw-actions">${writable ? `<button class="btn primary" data-act="sw-new-project" data-ws="${wsId}">${ICON.plus}New project</button>` : ""}<button class="btn" data-act="edit-workspace" data-id="${wsId}">${ICON.settings}Settings</button>${isWsOwner(wsId) ? `<button class="btn danger" data-act="ws-delete" data-id="${wsId}">${ICON.trash}Delete workspace</button>` : ""}</div></div>
     <div class="sw-kpis">${tile("open", "Open projects", c.open)}${tile("closed", "Closed projects", c.closed)}${tile("critical", "Critical", c.critical, "crit")}${tile("overdue", "Overdue", c.overdue, "bad")}</div>
     <section class="sw-sect"><div class="sw-sect-h"><h2>${{ open: "Open projects", closed: "Closed projects", critical: "Critical projects", overdue: "Overdue projects", all: "All projects" }[f]}</h2>${f !== "all" ? `<button class="linkbtn" data-act="sw-filter" data-ws="${wsId}" data-k="all">Show all</button>` : ""}</div>
     <div class="sw-table">
@@ -135,7 +135,7 @@ export function renderSimpleProject(view, pid) {
   view.innerHTML = `<div class="sw">
     <div class="sw-head"><div><p class="crumb"><a href="#/home">Home</a> / <a href="#/w/${w.id}">${esc(w.name)}</a></p>
       <h1>${esc(p.name)}</h1>${p.description ? `<p class="sub">${esc(p.description)}</p>` : ""}</div>
-      <div class="sw-actions">${writable ? (isClosedP(p) ? `<button class="btn" data-act="sw-reopen-project" data-id="${p.id}">Reopen project</button>` : `<button class="btn primary" data-act="sw-close-project" data-id="${p.id}">${ICON.check}Close project</button>`) + `<button class="btn" data-act="sw-edit-project" data-id="${p.id}">Edit</button>` : ""}</div></div>
+      <div class="sw-actions">${writable ? (isClosedP(p) ? `<button class="btn" data-act="sw-reopen-project" data-id="${p.id}">Reopen project</button>` : `<button class="btn primary" data-act="sw-close-project" data-id="${p.id}">${ICON.check}Close project</button>`) + `<button class="btn" data-act="sw-edit-project" data-id="${p.id}">Edit</button><button class="btn danger" data-act="sw-delete-project" data-id="${p.id}">${ICON.trash}Delete</button>` : ""}</div></div>
     <div class="sw-kpis sw-pk">
       <div class="sw-kpi"><span>Status</span>${statusPill(s.status)}</div>
       <div class="sw-kpi"><span>Priority</span>${prioPill(p.priority)}</div>
@@ -157,7 +157,7 @@ function taskGroup(t, isOpen, writable) {
       <span class="sw-tt"><b>${esc(t.title)}</b>${t.reference ? `<small class="num">${esc(t.reference)}</small>` : ""}</span>
       <span class="sw-tmeta">${!isOpen && pending ? `<span class="sw-next">${esc(pending.title)}${pending.responsible ? ` <span class="sw-who">${esc(pending.responsible)}</span>` : ""}</span>` : ""}
         ${st.length ? `<span class="num faint">${n}/${st.length}</span>` : ""}<span class="sw-pill ${done ? "st-ready" : n ? "st-working" : "st-not_started"}">${done ? "Done" : n ? "In progress" : "Pending"}</span></span>
-      ${writable ? `<button class="iconbtn sm" data-act="sw-task-menu" data-id="${t.id}" aria-label="Task options">${ICON.more}</button>` : ""}
+      ${writable ? `<button class="iconbtn sm" data-act="sw-task-menu" data-id="${t.id}" aria-label="Edit task" title="Edit task">${ICON.more}</button><button class="iconbtn sm sw-del" data-act="sw-task-delete" data-id="${t.id}" aria-label="Delete task" title="Delete task">${ICON.trash}</button>` : ""}
     </div>
     ${isOpen ? `<div class="sw-steps">
       ${st.map(s => `<div class="sw-step ${s.status}">
@@ -165,6 +165,7 @@ function taskGroup(t, isOpen, writable) {
         <span class="sw-st" ${writable ? `data-act="sw-step-edit" data-id="${s.id}" role="button" tabindex="0"` : ""}>${esc(s.title)}${s.note ? `<small>${esc(s.note)}</small>` : ""}</span>
         <span class="sw-who-c" ${writable ? `data-act="sw-step-who" data-id="${s.id}" role="button" tabindex="0"` : ""}>${s.responsible ? `<span class="sw-who">${esc(s.responsible)}</span>` : `<span class="faint">+ person</span>`}</span>
         <span class="sw-pill ${s.status === "done" ? "st-ready" : "st-overdue-soft"}">${s.status === "done" ? "Done" : "Pending"}</span>
+        ${writable ? `<button class="iconbtn sm sw-del" data-act="sw-step-delete" data-id="${s.id}" aria-label="Delete step" title="Delete step">${ICON.trash}</button>` : ""}
       </div>`).join("")}
       ${!st.length && !writable ? `<p class="hint">No steps.</p>` : ""}
       ${writable ? `<form class="sw-add sw-add-step" data-form="sw-add-step" data-task="${t.id}"><span>${ICON.plus}</span><input class="input" name="title" placeholder="Add a step, e.g. Waiting for shipment arrival" maxlength="300" autocomplete="off"><input class="input sw-ref" name="who" placeholder="Responsible" maxlength="80" list="sw-people" autocomplete="off"><button class="btn sm">Add</button></form>${peopleList()}` : ""}
@@ -238,6 +239,8 @@ export async function handleSimpleClick(act, el) {
     case "sw-close-project": { const p = projectById(id), s = projectStats(p); const ok = await dialog({ title: "Close this project?", text: s.done < s.total ? `${s.total - s.done} item(s) are still pending. You can reopen it later.` : "It will move to Closed projects. You can reopen it later.", confirm: "Close project" }); if (ok) await setClosed(id, true); break; }
     case "sw-reopen-project": await setClosed(id, false); break;
     case "sw-delete-project": await deleteProject(id); break;
+    case "sw-task-delete": await deleteTask(id); break;
+    case "sw-step-delete": await deleteStep(id); break;
   }
   return true;
 }
@@ -262,12 +265,7 @@ async function stepMenu(id) {
       const ok = await patchStep(id, { title: f.title.value.trim(), responsible: f.who.value.trim() || null, status: f.status.value, note: f.note.value.trim() || null });
       busy(b, false); if (ok) closeSheet();
     };
-    sh.querySelector("#swStepDel").onclick = async () => {
-      if (!await dialog({ title: "Delete this step?", confirm: "Delete", danger: true })) return;
-      const r = await run(sb.from("task_steps").delete().eq("id", id));
-      if (r.error) return toastError(r.error);
-      state.steps = state.steps.filter(x => x.id !== id); refresh(); closeSheet();
-    };
+    sh.querySelector("#swStepDel").onclick = async () => { if (await deleteStep(id)) closeSheet(); };
   });
 }
 async function taskMenu(id) {
@@ -292,12 +290,7 @@ async function taskMenu(id) {
       if (r.error) return toastError(r.error);
       closeSheet();
     };
-    sh.querySelector("#swTaskDel").onclick = async () => {
-      if (!await dialog({ title: "Delete this task?", text: st.length ? `Its ${st.length} step(s) will be deleted too. This can't be undone.` : "This can't be undone.", confirm: "Delete", danger: true })) return;
-      const r = await run(sb.from("tasks").delete().eq("id", id));
-      if (r.error) return toastError(r.error);
-      state.tasks = state.tasks.filter(x => x.id !== id); state.steps = state.steps.filter(s => s.task_id !== id); refresh(); closeSheet();
-    };
+    sh.querySelector("#swTaskDel").onclick = async () => { if (await deleteTask(id)) closeSheet(); };
   });
 }
 function openProjectSheet(id) {
@@ -322,6 +315,21 @@ async function saveProject(form) {
   if (r.error) return toastError(r.error);
   const i = state.projects.findIndex(x => x.id === id); state.projects[i] = r.data; refresh(); closeSheet();
 }
+async function deleteStep(id) {
+  const s = state.steps.find(x => x.id === id); if (!s) return false;
+  if (!await dialog({ title: `Delete step "${s.title}"?`, text: "This can't be undone.", confirm: "Delete", danger: true })) return false;
+  const r = await run(sb.from("task_steps").delete().eq("id", id));
+  if (r.error) { toastError(r.error); return false; }
+  state.steps = state.steps.filter(x => x.id !== id); refresh(); toast("Step deleted"); return true;
+}
+async function deleteTask(id) {
+  const t = state.taskById.get(id); if (!t) return false;
+  const n = stepsOf(id).length;
+  if (!await dialog({ title: `Delete task "${t.title}"?`, text: n ? `Its ${n} step(s) will be deleted too. This can't be undone.` : "This can't be undone.", confirm: "Delete", danger: true })) return false;
+  const r = await run(sb.from("tasks").delete().eq("id", id));
+  if (r.error) { toastError(r.error); return false; }
+  state.tasks = state.tasks.filter(x => x.id !== id); state.steps = state.steps.filter(s => s.task_id !== id); refresh(); toast("Task deleted"); return true;
+}
 async function deleteProject(id) {
   const p = projectById(id), n = tasksOf(id).length;
   if (!await dialog({ title: `Delete "${p.name}"?`, text: n ? `Its ${n} task(s) and their steps will be deleted too. This can't be undone. Closing the project keeps the history instead.` : "This can't be undone.", confirm: "Delete project", danger: true })) return;
@@ -330,7 +338,7 @@ async function deleteProject(id) {
   const r = await run(sb.from("projects").delete().eq("id", id));
   if (r.error) return toastError(r.error);
   state.projects = state.projects.filter(x => x.id !== id); state.tasks = state.tasks.filter(t => !ids.includes(t.id)); state.steps = state.steps.filter(s => !ids.includes(s.task_id));
-  closeSheet(); refresh(); location.hash = "#/w/" + p.workspace_id;
+  closeSheet(); refresh(); toast("Project deleted"); location.hash = "#/w/" + p.workspace_id;
 }
 
 /** Capture on the work screens: in a project → add a task; anywhere else outside Finance → new project. */

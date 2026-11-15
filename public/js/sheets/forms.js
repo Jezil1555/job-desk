@@ -370,7 +370,7 @@ export async function handleFormClick(act, el) {
       if (typed === null) return true;
       if (typed !== w.name) { toastError("The name didn't match. Nothing was deleted."); return true; }
       const r = await run(sb.from("workspaces").delete().eq("id", id)); if (r.error) return toastError(r.error), true;
-      await loadAll().catch(() => {}); closeSheet(); location.hash = "#/workspaces"; toast("Workspace deleted"); return true;
+      await loadAll().catch(() => {}); closeSheet(); location.hash = "#/home"; toast("Workspace deleted"); return true;
     }
     case "contact-archive": { const r = await run(sb.from("contacts").update({ archived: true }).eq("id", id)); if (r.error) return toastError(r.error), true; state.contacts = state.contacts.filter(c => c.id !== id); closeSheet(); toast("Contact archived"); return true; }
   }

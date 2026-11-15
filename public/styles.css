@@ -1016,3 +1016,7 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
   .sw-hk .sw-kpi b { font-size: 1.45rem; }
   .sw-hk .sw-kpi > span { font-size: .74rem; }
 }
+.sw-del { color: var(--faint); }
+.sw-del:hover { color: var(--bad); }
+.sw-step { grid-template-columns: auto minmax(0, 1fr) auto auto auto; }
+@media (max-width: 860px) { .sw-step { grid-template-columns: auto minmax(0, 1fr) auto auto; } }
