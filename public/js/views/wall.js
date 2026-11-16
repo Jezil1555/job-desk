@@ -5,7 +5,7 @@ import { state, activeWorkspaces, wsById } from "../store.js";
 import { loadAll } from "../api.js";
 import { ICON } from "../ui.js";
 import { projectStats } from "./simple.js";
-import { letter } from "./quicktodo.js";
+import { letter, critFirst } from "./quicktodo.js";
 
 const LS_PROJ = "jd-wall-projects", LS_HIDE_WS = "jd-wall-hide-ws";
 const lsList = k => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch (e) { return []; } };
@@ -18,8 +18,8 @@ function todoNote(t, today, num) {
   const ad = dayOf(t.created_at), n = Math.round((new Date(today) - new Date(ad)) / 864e5);
   const items = Array.isArray(t.items) ? t.items : [];
   const dn = items.filter(x => x.done).length;
-  return `<article class="wnote ${n >= 2 ? "old" : n === 1 ? "y" : ""}">
-    <div class="wn-top"><button class="sw-check" data-act="qt-toggle" data-id="${t.id}" aria-label="Mark done"></button><div class="wn-title"><b class="wn-num">${num}.</b> ${esc(t.text)}</div></div>
+  return `<article class="wnote ${n >= 2 ? "old" : n === 1 ? "y" : ""} ${t.critical ? "crit" : ""}">
+    <div class="wn-top"><button class="sw-check" data-act="qt-toggle" data-id="${t.id}" aria-label="Mark done"></button><div class="wn-title"><b class="wn-num">${num}.</b> ${t.critical ? `<em class="qt-crit">Critical</em> ` : ""}${esc(t.text)}</div></div>
     ${t.note ? `<div class="wn-desc">${esc(t.note)}</div>` : ""}
     ${items.length ? `<ul class="qt-sub wn-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><b class="qt-letter">${letter(i)}.</b><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="Tick">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}
     <div class="wn-meta">${n <= 0 ? "Added today" : n === 1 ? "From yesterday" : `Since ${new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(ad + "T12:00:00Z"))} · ${n} days`}${items.length ? ` · ${dn}/${items.length}` : ""}</div>
@@ -40,7 +40,7 @@ export function renderWall(view) {
   const showProj = lsGet(LS_PROJ, false); // off by default: workspace names stay private on a shared screen
   const now = new Date(), today = dayOf(now.toISOString());
   const todos = state.quick || [];
-  const open = todos.filter(t => !t.done_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const open = todos.filter(t => !t.done_at).sort(critFirst);
   const carried = open.filter(t => dayOf(t.created_at) < today), fresh = open.filter(t => dayOf(t.created_at) >= today);
   const doneToday = todos.filter(t => t.done_at && dayOf(t.done_at) === today).sort((a, b) => b.done_at.localeCompare(a.done_at));
   const hidden = new Set(lsList(LS_HIDE_WS));
@@ -58,6 +58,7 @@ export function renderWall(view) {
       <a class="wall-brand" href="#/todo" title="Back to To-do"><span class="wm">J<i>.</i> Desk</span><small>Pending jobs</small></a>
       <div class="wall-kpis">
         <div><b>${open.length}</b><span>To-dos pending</span></div>
+        ${open.some(t => t.critical) ? `<div class="bad"><b>${open.filter(t => t.critical).length}</b><span>Critical</span></div>` : ""}
         <div class="${carried.length ? "bad" : ""}"><b>${carried.length}</b><span>Carried over</span></div>
         ${showProj ? `<div><b>${projs.length}</b><span>Open projects</span></div><div class="${overdueP ? "bad" : ""}"><b>${overdueP}</b><span>Projects overdue</span></div>` : ""}
         <div class="ok"><b>${doneToday.length + (showProj ? stepsDone.length : 0)}</b><span>Done today</span></div>

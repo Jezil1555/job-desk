@@ -47,7 +47,8 @@ export async function handleQuickSubmit(form) {
   const text = form.elements.text.value.trim(); if (!text) return true;
   const note = form.elements.note ? form.elements.note.value.trim() || null : null;
   const items = form.elements.items ? splitItems(form.elements.items.value).map(x => ({ text: x, done: false })) : [];
-  const r = await run(sb.from("quick_todos").insert({ text, note, items, user_id: state.user.id }).select().single());
+  const critical = !!(form.elements.critical && form.elements.critical.checked);
+  const r = await run(sb.from("quick_todos").insert({ text, note, items, critical, user_id: state.user.id }).select().single());
   if (r.error) { toastError(r.error); return true; }
   upsertLocal(r.data);
   setTimeout(() => { const i = document.querySelector('[data-form="qt-add"] input'); if (i) i.focus(); }, 30);
@@ -66,6 +67,10 @@ export async function handleQuickClick(act, el) {
     if (r.error) toastError(r.error); else { upsertLocal(r.data); if (r.data.done_at) toast("Done"); }
   }
   if (act === "qt-edit") editSheet(t);
+  if (act === "qt-crit") {
+    const r = await run(sb.from("quick_todos").update({ critical: !t.critical }).eq("id", id).select().single());
+    if (r.error) toastError(r.error); else { upsertLocal(r.data); toast(r.data.critical ? "Marked critical" : "No longer critical"); }
+  }
   if (act === "qt-sub") {
     const items = (Array.isArray(t.items) ? t.items : []).map((x, i) => i === Number(el.dataset.i) ? { ...x, done: !x.done } : x);
     const r = await run(sb.from("quick_todos").update({ items }).eq("id", id).select().single());
@@ -84,26 +89,29 @@ const dayOf = iso => zonedDate(iso, state.tz);
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dayTitle = (d, today) => d === today ? "Today" : d === addDays(today, -1) ? "Yesterday" : fmtDate(d, { weekday: "long", day: "numeric", month: "long", year: d.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
 
+const FLAG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>';
 export const letter = i => i < 26 ? String.fromCharCode(65 + i) : String.fromCharCode(65 + Math.floor(i / 26) - 1) + String.fromCharCode(65 + (i % 26));
 function details(t) {
   const items = Array.isArray(t.items) ? t.items : [];
   return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><b class="qt-letter">${letter(i)}.</b><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
 }
+export const critFirst = (a, b) => (b.critical ? 1 : 0) - (a.critical ? 1 : 0) || a.created_at.localeCompare(b.created_at);
 const subCount = t => { const it = Array.isArray(t.items) ? t.items : []; if (!it.length) return ""; const d = it.filter(x => x.done).length; return ` · <span class="${d === it.length ? "ok-text" : "faint"}">${d}/${it.length} sub-items</span>`; };
 function itemRow(t, today, { showAdded = true, compact = false, num = null } = {}) {
   const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
   const meta = done
     ? `<span class="ok-text">Done ${dd === ad ? "same day" : fmtDate(dd, { day: "numeric", month: "short" })} · ${fmtTime(t.done_at)}</span>${showAdded && dd !== ad ? ` <span class="faint">· added ${fmtDate(ad, { day: "numeric", month: "short" })}</span>` : ""}`
     : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
-  return `<li class="qt-i ${done ? "done" : ""}">
+  return `<li class="qt-i ${done ? "done" : ""} ${t.critical && !done ? "crit" : ""}">
     <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
-    ${num !== null ? `<b class="qt-num">${num}.</b>` : ""}<div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
+    ${num !== null ? `<b class="qt-num">${num}.</b>` : ""}<div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${t.critical && !done ? `<em class="qt-crit">Critical</em> ` : ""}${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
+    ${done ? "" : `<button class="iconbtn sm qt-flag ${t.critical ? "on" : ""}" data-act="qt-crit" data-id="${t.id}" aria-label="${t.critical ? "Remove critical" : "Mark critical"}" title="${t.critical ? "Remove critical" : "Mark critical"}">${FLAG}</button>`}
     <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
 }
 
 export function renderTodo(view) {
   const all = state.quick || [], today = todayISO(state.tz), yday = addDays(today, -1);
-  const open = all.filter(t => !t.done_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const open = all.filter(t => !t.done_at).sort(critFirst);
   const fromY = open.filter(t => dayOf(t.created_at) === yday), older = open.filter(t => dayOf(t.created_at) < yday), todays = open.filter(t => dayOf(t.created_at) >= today);
   const doneToday = all.filter(t => t.done_at && dayOf(t.done_at) === today);
   // diary: every date something was added or completed
@@ -127,7 +135,8 @@ export function renderTodo(view) {
         <div class="qt-add"><input class="input" name="text" maxlength="500" placeholder="Add something to do today…" autocomplete="off"><button class="btn sm primary">${ICON.plus}Add</button></div>
         ${state.ui.qtDetails ? `<div class="qt-more-f"><textarea class="input" name="note" rows="2" maxlength="4000" placeholder="Description (optional)"></textarea>
           <textarea class="input" name="items" rows="3" placeholder="Sub-items (optional) — one per line, e.g.&#10;DSV - materials disposal&#10;Adnov - KSA warehouse&#10;QBH"></textarea></div>` : ""}
-        <button type="button" class="linkbtn qt-toggle-d" data-act="qt-details">${state.ui.qtDetails ? "− Hide description & sub-items" : "+ Description / sub-items (optional)"}</button>
+        <div class="qt-addopts"><label class="qt-critc"><input type="checkbox" name="critical"> Critical</label>
+        <button type="button" class="linkbtn qt-toggle-d" data-act="qt-details">${state.ui.qtDetails ? "− Hide description & sub-items" : "+ Description / sub-items (optional)"}</button></div>
       </form>
       ${open.length ? group("Pending from yesterday", fromY, "y") + group("Older, still pending", older, "o") + group("Today", todays) : `<p class="qt-empty">Nothing pending. 🎉</p>`}
     </section>
@@ -153,8 +162,8 @@ export function renderTodo(view) {
 }
 export function quickTodoSummary() {
   const all = state.quick || [], today = todayISO(state.tz);
-  const open = all.filter(t => !t.done_at), carried = open.filter(t => dayOf(t.created_at) < today).length;
-  return `<a class="td-strip" href="#/todo">${ICON.check}<span><b>${open.length ? `${open.length} to-do${open.length === 1 ? "" : "s"} pending` : "To-do: all clear"}</b>${carried ? ` · <span class="bad-text">${carried} carried over</span>` : ""}</span><span class="faint">Open ›</span></a>`;
+  const open = all.filter(t => !t.done_at), carried = open.filter(t => dayOf(t.created_at) < today).length, crit = open.filter(t => t.critical).length;
+  return `<a class="td-strip" href="#/todo">${ICON.check}<span><b>${open.length ? `${open.length} to-do${open.length === 1 ? "" : "s"} pending` : "To-do: all clear"}</b>${crit ? ` · <span class="bad-text"><b>${crit} critical</b></span>` : ""}${carried ? ` · <span class="bad-text">${carried} carried over</span>` : ""}</span><span class="faint">Open ›</span></a>`;
 }
 export async function handleTodoChange(e) {
   if (e.target.id !== "td-day") return false;
@@ -166,6 +175,7 @@ function editSheet(t) {
   openSheet(sh => {
     sh.innerHTML = sheetHead("Edit to-do") + `<form class="sh-body" id="qtEdit">
       <label class="field"><span>To-do</span><input class="input" name="text" value="${esc(t.text)}" maxlength="500" required></label>
+      <label class="check qt-critc"><input type="checkbox" name="critical" ${t.critical ? "checked" : ""}> Critical — needs to be done soon</label>
       <label class="field"><span>Description (optional)</span><textarea class="input" name="note" rows="3" maxlength="4000">${esc(t.note || "")}</textarea></label>
       <label class="field"><span>Sub-items (optional, one per line)</span><textarea class="input" name="items" rows="5">${esc(items.map(x => x.text).join("\n"))}</textarea></label>
       <p class="hint">Sub-items you keep stay ticked if they were done.</p>
@@ -176,7 +186,7 @@ function editSheet(t) {
       const prev = new Map(items.map(x => [x.text.toLowerCase(), !!x.done]));
       const next = splitItems(f.items.value).map(x => ({ text: x, done: prev.get(x.toLowerCase()) || false }));
       busy(b);
-      const r = await run(sb.from("quick_todos").update({ text: f.text.value.trim(), note: f.note.value.trim() || null, items: next }).eq("id", t.id).select().single());
+      const r = await run(sb.from("quick_todos").update({ text: f.text.value.trim(), note: f.note.value.trim() || null, items: next, critical: f.critical.checked }).eq("id", t.id).select().single());
       busy(b, false);
       if (r.error) return toastError(r.error);
       upsertLocal(r.data); closeSheet();
