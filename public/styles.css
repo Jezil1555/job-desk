@@ -1181,3 +1181,14 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .qt-num { min-width: 22px; text-align: right; font-weight: 700; color: var(--accent); margin-top: 3px; font-variant-numeric: tabular-nums; }
 .qt-letter { min-width: 16px; font-weight: 600; color: var(--muted); font-size: .84rem; }
 .wn-num { color: var(--accent); }
+/* folding workspaces list in the side menu */
+.subnav.ws .ws-toggle { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 6px 12px; margin: 0 0 2px; cursor: pointer; font: 600 .72rem var(--font); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); text-align: left; border-radius: 8px; }
+.subnav.ws .ws-toggle:hover { background: var(--surface-2); color: var(--ink); }
+.subnav.ws .ws-toggle svg { width: 14px; height: 14px; transition: transform .15s; }
+.subnav.ws.open .ws-toggle svg { transform: rotate(90deg); }
+.subnav.ws .ws-toggle span { flex: 1; }
+.subnav.ws .ws-toggle small { font: 500 .72rem var(--mono); color: var(--faint); }
+.wb-ws { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 24px 0; font-size: .82rem; color: var(--muted); flex: none; }
+.wb-ws .chip { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; opacity: .55; border: 1px solid var(--line); background: var(--surface); }
+.wb-ws .chip.on { opacity: 1; border-color: var(--line-2); }
+.wb-ws .dot { width: 8px; height: 8px; border-radius: 3px; }

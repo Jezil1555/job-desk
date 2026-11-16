@@ -46,6 +46,8 @@ const NAV = [
 ];
 
 /* ---------- routing ---------- */
+// Workspaces list in the side menu is folded by default so their names aren't on screen for others to see
+const wsOpen = () => { try { return localStorage.getItem("jd-nav-ws-open") === "1"; } catch (e) { return false; } };
 function parseRoute() {
   const raw = location.hash.replace(/^#\/?/, "");
   const [path, query] = raw.split("?");
@@ -118,7 +120,8 @@ function renderNav() {
     <a class="brand" href="#/home" aria-label="J. Desk home"><span class="wm">J<i>.</i> Desk</span><small class="byline">by Jezil</small></a>
     <nav aria-label="Main">${NAV.map(n => `<a href="${n.href}" class="${k === n.key ? "on" : ""} ${n.soon ? "soon" : ""}">${ICON[n.icon]}<span>${n.label}</span>${n.soon ? `<small>${n.soon}</small>` : counts[n.key] ? `<b class="cnt">${counts[n.key]}</b>` : ""}</a>`).join("")}</nav>
     ${saved.length ? `<div class="subnav"><p>Saved views</p>${saved.map((s, i) => `<a href="#/tasks/${s.view}" data-act="apply-view" data-i="${i}">★ ${esc(s.name)}</a>`).join("")}</div>` : ""}
-    <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>
+    <div class="subnav ws ${wsOpen() ? "open" : ""}"><button class="ws-toggle" data-act="ws-nav-toggle" aria-expanded="${wsOpen()}">${ICON.chevron}<span>Workspaces</span><small>${activeWorkspaces().length}</small></button>
+      ${wsOpen() ? activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("") : ""}</div>
     <div class="side-foot"><img class="side-mark" src="/icons/logo.svg" alt="J." width="26" height="26" title="J. Desk"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
   $("bottomnav").innerHTML = [
     ["home", "#/home", "home", "Home"], ["todo", "#/todo", "check", "To-do"], ["capture", null, "plus", "Capture"], ["investors", "#/investors", "invest", "Investors"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
@@ -143,6 +146,7 @@ document.addEventListener("click", async e => {
   const act = el.dataset.act;
   if (el.tagName === "A" && !["apply-view", "close-sheet", "filter-ws"].includes(act)) e.preventDefault();
   if (act === "open-task" && e.target.closest("[data-act]") !== el) return;
+  if (act === "ws-nav-toggle") { try { localStorage.setItem("jd-nav-ws-open", wsOpen() ? "0" : "1"); } catch (e) {} render(); return; }
   if (await handleQuickClick(act, el)) return;
   if (await handleSimpleClick(act, el)) return;
   if (await handleIoClick(act, el)) return;
@@ -151,7 +155,7 @@ document.addEventListener("click", async e => {
   if (await handleTaskClick(act, el)) return;
   if (await handleFormClick(act, el)) return;
   if (await handleTasksClick(act, el, rerender)) return;
-  if (handleWallClick(act, rerender)) return;
+  if (handleWallClick(act, rerender, el)) return;
   if (handleCalendarClick(act, el, rerender)) return;
   if (await handleSettingsClick(act, el, rerender)) return;
   if (await handleKnowledgeClick(act, el)) return;

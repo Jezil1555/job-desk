@@ -7,7 +7,8 @@ import { ICON } from "../ui.js";
 import { projectStats } from "./simple.js";
 import { letter } from "./quicktodo.js";
 
-const LS_PROJ = "jd-wall-projects";
+const LS_PROJ = "jd-wall-projects", LS_HIDE_WS = "jd-wall-hide-ws";
+const lsList = k => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch (e) { return []; } };
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch (e) {} };
 
@@ -36,13 +37,14 @@ function projectCard(p) {
 }
 
 export function renderWall(view) {
-  const showProj = lsGet(LS_PROJ, true);
+  const showProj = lsGet(LS_PROJ, false); // off by default: workspace names stay private on a shared screen
   const now = new Date(), today = dayOf(now.toISOString());
   const todos = state.quick || [];
   const open = todos.filter(t => !t.done_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const carried = open.filter(t => dayOf(t.created_at) < today), fresh = open.filter(t => dayOf(t.created_at) >= today);
   const doneToday = todos.filter(t => t.done_at && dayOf(t.done_at) === today).sort((a, b) => b.done_at.localeCompare(a.done_at));
-  const wsIds = new Set(activeWorkspaces().map(w => w.id));
+  const hidden = new Set(lsList(LS_HIDE_WS));
+  const wsIds = new Set(activeWorkspaces().filter(w => !hidden.has(w.id)).map(w => w.id));
   const projs = state.projects.filter(p => !p.archived && !p.closed_at && wsIds.has(p.workspace_id)).map(p => ({ p, s: projectStats(p) }))
     .sort((a, b) => (a.s.status === "overdue" ? 0 : 1) - (b.s.status === "overdue" ? 0 : 1) || (a.p.priority === "critical" ? 0 : 1) - (b.p.priority === "critical" ? 0 : 1) || (a.s.daysLeft ?? 9999) - (b.s.daysLeft ?? 9999)).map(x => x.p);
   const stepsDone = (state.steps || []).filter(x => x.status === "done" && x.done_at && dayOf(x.done_at) === today);
@@ -68,6 +70,7 @@ export function renderWall(view) {
         </div>
       </div>
     </header>
+    ${showProj ? `<div class="wb-ws"><span>Projects from:</span>${activeWorkspaces().map(w => `<button class="chip ${hidden.has(w.id) ? "" : "on"}" data-act="wall-ws" data-id="${w.id}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</button>`).join("")}</div>` : ""}
     <form class="wb-add" data-form="qt-add"><input class="input" name="text" maxlength="500" placeholder="Write on the board… (Enter to add a to-do)" autocomplete="off"></form>
     <div class="wall-cols wb-cols" style="--n:${showProj ? 4 : 3}">
       ${col("Carried over", "c-old", carried.length, carried.length ? carried.map((t, i) => todoNote(t, today, i + 1)).join("") : `<div class="wcol-clear">Nothing left from earlier ✓</div>`)}
@@ -103,8 +106,9 @@ function toggleFull() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen().catch(() => {});
 }
-export function handleWallClick(act, rerender) {
-  if (act === "wall-proj") { lsSet(LS_PROJ, !lsGet(LS_PROJ, true)); rerender(); return true; }
+export function handleWallClick(act, rerender, el) {
+  if (act === "wall-ws") { const id = el && el.dataset.id, h = new Set(lsList(LS_HIDE_WS)); h.has(id) ? h.delete(id) : h.add(id); try { localStorage.setItem(LS_HIDE_WS, JSON.stringify([...h])); } catch (e) {} rerender(); return true; }
+  if (act === "wall-proj") { lsSet(LS_PROJ, !lsGet(LS_PROJ, false)); rerender(); return true; }
   if (act === "wall-full") { toggleFull(); return true; }
   return false;
 }
