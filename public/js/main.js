@@ -31,7 +31,7 @@ import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./v
 import { renderWall, enterWall, leaveWall, handleWallClick, handleWallKey } from "./views/wall.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
 import { handleIoClick, handleIoChange } from "./views/simpleio.js";
-import { handleQuickClick, handleQuickSubmit } from "./views/quicktodo.js";
+import { handleQuickClick, handleQuickSubmit, renderTodo, handleTodoChange } from "./views/quicktodo.js";
 import { renderInvestors, handleInvClick, handleInvChange, handleInvSubmit } from "./views/investors.js";
 import { renderSimpleHome, renderSimpleWorkspace, renderSimpleProject, handleSimpleClick, handleSimpleSubmit, simpleCapture } from "./views/simple.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
@@ -39,6 +39,7 @@ import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, run
 const cfg = window.JOBDESK_CONFIG;
 const NAV = [
   { key: "home", label: "Home", icon: "home", href: "#/home" },
+  { key: "todo", label: "To-do", icon: "check", href: "#/todo" },
   { key: "investors", label: "Investors", icon: "invest", href: "#/investors" },
   { key: "finance", label: "Finance", icon: "finance", href: "#/finance" },
   { key: "personal", label: "Personal", icon: "user", href: "#/personal" }
@@ -53,7 +54,7 @@ function parseRoute() {
   const r = { name: seg[0] || "home", a: seg[1], b: seg[2], c: seg[3], params };
   return r;
 }
-const navKey = r => ({ home: "home", tasks: "tasks", board: "tasks", calendar: "tasks", followups: "tasks", workspaces: "home", w: "home", p: "home", classic: "home", investors: "investors", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
+const navKey = r => ({ home: "home", tasks: "tasks", board: "tasks", calendar: "tasks", followups: "tasks", workspaces: "home", w: "home", p: "home", classic: "home", investors: "investors", todo: "todo", finance: "finance", reports: "finance", personal: "personal", goals: "personal", notes: "personal", settings: "settings", search: "search", alerts: "alerts" }[r.name] || "home");
 
 function render() {
   if (!state.user) return;
@@ -90,6 +91,7 @@ function render() {
       case "personal": renderPersonal(view); title = "Personal"; break;
       case "finance": r.a ? renderFinance(view, r.a, r.b || "overview", r.c) : renderFinanceHome(view); if (r.a && fin.loaded) { const fe = fin.entities.find(x => x.id === r.a); if (fe) title = fe.name + " · " + ((fe.kind === "personal" ? (MONEY_TABS[r.b] || ADV_TABS[r.b]) : FIN_TABS[r.b]) || "Overview"); } break;
       case "classic": renderHome(view); title = "Command Centre"; break;
+      case "todo": renderTodo(view); title = "To-do"; break;
       case "investors": renderInvestors(view, r.a, r.b || "overview", render); title = "Investor Portal"; break;
       default: renderSimpleHome(view); title = "Home";
     }
@@ -119,7 +121,7 @@ function renderNav() {
     <div class="subnav ws"><p>Workspaces</p>${activeWorkspaces().map(w => `<a href="#/w/${w.id}" class="${state.route.a === w.id ? "on" : ""}"><i class="dot" style="background:${esc(w.color)}"></i>${esc(w.name)}</a>`).join("")}</div>
     <div class="side-foot"><img class="side-mark" src="/icons/logo.svg" alt="J." width="26" height="26" title="J. Desk"><a href="#/settings" class="${k === "settings" ? "on" : ""}">${ICON.settings}<span>Settings</span></a><a href="#/search" class="${k === "search" ? "on" : ""}">${ICON.search}<span>Search</span></a></div>`;
   $("bottomnav").innerHTML = [
-    ["home", "#/home", "home", "Home"], ["investors", "#/investors", "invest", "Investors"], ["capture", null, "plus", "Capture"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
+    ["home", "#/home", "home", "Home"], ["todo", "#/todo", "check", "To-do"], ["capture", null, "plus", "Capture"], ["investors", "#/investors", "invest", "Investors"], ["finance", "#/finance", "finance", "Finance"], ["personal", "#/personal", "user", "Personal"]
   ].map(([key, href, ic, label]) => key === "capture" ? `<button class="bn-capture" data-act="capture" aria-label="Quick capture">${ICON.plus}</button>` :
     `<a href="${href}" class="${k === key ? "on" : ""}">${ICON[ic]}<span>${label}</span>${counts[key] ? `<b class="cnt">${counts[key]}</b>` : ""}</a>`).join("");
   const b = $("bellCount"); b.hidden = !unread; b.textContent = unread > 99 ? "99+" : unread;
@@ -206,6 +208,7 @@ document.addEventListener("keydown", e => {
 document.addEventListener("change", async e => {
   if (await handleIoChange(e)) return;
   if (await handleInvChange(e)) return;
+  if (await handleTodoChange(e)) return;
   if (handleCaptureChange(e)) return;
   if (handleTaskChange(e)) return;
   if (await handleContactSelect(e)) return;

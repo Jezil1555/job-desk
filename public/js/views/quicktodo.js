@@ -6,8 +6,7 @@ import { ICON, toast, toastError, dialog } from "../ui.js";
 import { sb, run } from "../api.js";
 
 export async function loadQuickTodos() {
-  const since = new Date(Date.now() - 7 * 864e5).toISOString();
-  const r = await sb.from("quick_todos").select("*").or(`done_at.is.null,done_at.gte.${since}`).order("created_at").limit(500);
+  const r = await sb.from("quick_todos").select("*").order("created_at").limit(5000);
   state.quick = r.error ? [] : (r.data || []);
 }
 
@@ -55,6 +54,8 @@ export async function handleQuickClick(act, el) {
   if (!act.startsWith("qt-")) return false;
   const id = el.dataset.id, t = (state.quick || []).find(x => x.id === id);
   if (act === "qt-showdone") { state.ui.qtShowDone = !state.ui.qtShowDone; emit("data"); return true; }
+  if (act === "qt-day-clear") { state.ui.todoDay = null; emit("data"); return true; }
+  if (act === "qt-more-days") { state.ui.todoSpan = (state.ui.todoSpan || 14) + 30; emit("data"); return true; }
   if (!t) return true;
   if (act === "qt-toggle") {
     const r = await run(sb.from("quick_todos").update({ done_at: t.done_at ? null : new Date().toISOString() }).eq("id", id).select().single());
@@ -70,4 +71,70 @@ export async function handleQuickClick(act, el) {
     if (r.error) toastError(r.error); else { state.quick = state.quick.filter(x => x.id !== id); emit("data"); }
   }
   return true;
+}
+
+/* ---------------- To-do tab: pending now + date-wise diary ---------------- */
+const dayOf = iso => zonedDate(iso, state.tz);
+const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const dayTitle = (d, today) => d === today ? "Today" : d === addDays(today, -1) ? "Yesterday" : fmtDate(d, { weekday: "long", day: "numeric", month: "long", year: d.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
+
+function itemRow(t, today, { showAdded = true } = {}) {
+  const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
+  const meta = done
+    ? `<span class="ok-text">Done ${dd === ad ? "same day" : fmtDate(dd, { day: "numeric", month: "short" })} · ${fmtTime(t.done_at)}</span>${showAdded && dd !== ad ? ` <span class="faint">· added ${fmtDate(ad, { day: "numeric", month: "short" })}</span>` : ""}`
+    : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
+  return `<li class="qt-i ${done ? "done" : ""}">
+    <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
+    <div class="qt-t" data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0"><span>${esc(t.text)}</span><small>${meta}</small></div>
+    <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
+}
+
+export function renderTodo(view) {
+  const all = state.quick || [], today = todayISO(state.tz), yday = addDays(today, -1);
+  const open = all.filter(t => !t.done_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const fromY = open.filter(t => dayOf(t.created_at) === yday), older = open.filter(t => dayOf(t.created_at) < yday), todays = open.filter(t => dayOf(t.created_at) >= today);
+  const doneToday = all.filter(t => t.done_at && dayOf(t.done_at) === today);
+  // diary: every date something was added or completed
+  const jump = state.ui.todoDay || null, span = state.ui.todoSpan || 14;
+  const dates = [...new Set(all.flatMap(t => [dayOf(t.created_at), t.done_at ? dayOf(t.done_at) : null]).filter(Boolean))].sort().reverse();
+  const shown = jump ? [jump] : dates.filter(d => d > addDays(today, -span));
+  const olderLeft = !jump && dates.some(d => d <= addDays(today, -span));
+  const group = (title, items, cls = "") => items.length ? `<div class="td-g ${cls}"><h3>${title} <span class="c">${items.length}</span></h3><ul class="qt-list">${items.map(t => itemRow(t, today)).join("")}</ul></div>` : "";
+  view.innerHTML = `<div class="sw td">
+    <div class="sw-head"><div><h1>To-do</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long" })} · your private daily list</p></div></div>
+    <div class="sw-kpis td-k">
+      <div class="sw-kpi"><b class="num">${open.length}</b><span>Pending now</span></div>
+      <div class="sw-kpi ${fromY.length + older.length ? "bad" : ""}"><b class="num">${fromY.length + older.length}</b><span>Carried over</span></div>
+      <div class="sw-kpi"><b class="num">${todays.length}</b><span>Added today, open</span></div>
+      <div class="sw-kpi ok"><b class="num">${doneToday.length}</b><span>Done today</span></div>
+    </div>
+    <section class="qt td-now">
+      <form class="qt-add" data-form="qt-add"><input class="input" name="text" maxlength="500" placeholder="Add something to do today…" autocomplete="off"><button class="btn sm primary">${ICON.plus}Add</button></form>
+      ${open.length ? group("Pending from yesterday", fromY, "y") + group("Older, still pending", older, "o") + group("Today", todays) : `<p class="qt-empty">Nothing pending. 🎉</p>`}
+    </section>
+    <section class="sw-sect">
+      <div class="sw-sect-h"><h2>Diary</h2><span class="td-jump"><input class="input sm" type="date" id="td-day" max="${today}" value="${jump || ""}" aria-label="Go to date">${jump ? `<button class="linkbtn" data-act="qt-day-clear">Show all days</button>` : ""}</span></div>
+      ${shown.length ? shown.map(d => {
+        const addedD = all.filter(t => dayOf(t.created_at) === d).sort((a, b) => a.created_at.localeCompare(b.created_at));
+        const doneD = all.filter(t => t.done_at && dayOf(t.done_at) === d && dayOf(t.created_at) !== d).sort((a, b) => a.done_at.localeCompare(b.done_at));
+        const stillOpen = addedD.filter(t => !t.done_at).length, doneCount = all.filter(t => t.done_at && dayOf(t.done_at) === d).length;
+        return `<div class="td-day">
+          <div class="td-day-h"><h3>${dayTitle(d, today)}${d === today || d === yday ? ` <small class="faint">${fmtDate(d, { day: "numeric", month: "short" })}</small>` : ""}</h3>
+            <span class="td-sum">${addedD.length ? `${addedD.length} added` : ""}${doneCount ? `${addedD.length ? " · " : ""}<span class="ok-text">${doneCount} done</span>` : ""}${stillOpen ? ` · <span class="bad-text">${stillOpen} still pending</span>` : ""}</span></div>
+          ${addedD.length ? `<ul class="qt-list">${addedD.map(t => itemRow(t, today, { showAdded: false })).join("")}</ul>` : ""}
+          ${doneD.length ? `<p class="td-sub">Finished this day (added earlier)</p><ul class="qt-list">${doneD.map(t => itemRow(t, today)).join("")}</ul>` : ""}
+        </div>`;
+      }).join("") : `<div class="sw-empty">${jump ? "Nothing was added or finished on this day." : "Your diary fills up as you add and finish to-dos."}</div>`}
+      ${olderLeft ? `<button class="btn block" data-act="qt-more-days">Show older days</button>` : ""}
+    </section>
+  </div>`;
+}
+export function quickTodoSummary() {
+  const all = state.quick || [], today = todayISO(state.tz);
+  const open = all.filter(t => !t.done_at), carried = open.filter(t => dayOf(t.created_at) < today).length;
+  return `<a class="td-strip" href="#/todo">${ICON.check}<span><b>${open.length ? `${open.length} to-do${open.length === 1 ? "" : "s"} pending` : "To-do: all clear"}</b>${carried ? ` · <span class="bad-text">${carried} carried over</span>` : ""}</span><span class="faint">Open ›</span></a>`;
+}
+export async function handleTodoChange(e) {
+  if (e.target.id !== "td-day") return false;
+  state.ui.todoDay = e.target.value || null; emit("data"); return true;
 }

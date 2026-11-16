@@ -694,18 +694,26 @@ def _fake(route, body):
 with sync_playwright() as pw:
     b = pw.chromium.launch()
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
-        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = []
+        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = [{"id": "qt-y", "user_id": ME, "text": "Chase LLP for September return", "done_at": None, "sort": 0, "created_at": iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))}, {"id": "qt-o", "user_id": ME, "text": "Book car service", "done_at": None, "sort": 0, "created_at": iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=4))}]
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
         page.goto(BASE + "/#/home"); page.wait_for_selector(".sw-kpis", timeout=10000)
         check(f"[{tag}] home shows workspace cards", page.locator(".sw-ws").count() >= 3)
+        check(f"[{tag}] home shows to-do strip with carried-over count", "2 to-dos pending" in page.inner_text(".td-strip") and "2 carried over" in page.inner_text(".td-strip"), page.inner_text(".td-strip"))
+        page.goto(BASE + "/#/todo"); page.wait_for_selector(".td-now")
+        t0 = page.inner_text("#view")
+        check(f"[{tag}] to-do tab groups yesterday and older pending", "Pending from yesterday" in t0 and "Older, still pending" in t0 and "Chase LLP for September return" in t0, t0[:400])
         for txt in ["Call Saags about cargo pants", "Pay DEWA bill"]:
-            page.fill('[data-form="qt-add"] input', txt); page.press('[data-form="qt-add"] input', "Enter"); page.wait_for_function(f"document.querySelector('.qt').innerText.includes({json.dumps(txt)})")
-        check(f"[{tag}] quick to-do shows 2 open with added date", "2 open" in page.inner_text(".qt") and "Added today" in page.inner_text(".qt"))
-        page.click('.qt-i:has-text("Pay DEWA bill") [data-act="qt-toggle"]'); page.wait_for_function("document.querySelector('.qt').innerText.includes('1 done today')")
-        check(f"[{tag}] ticking moves it to done, other stays open", "1 open" in page.inner_text(".qt") and "Call Saags" in page.inner_text(".qt-list"))
-        page.click('.qt-i:has-text("Call Saags") [data-act="qt-del"]'); page.click('#dialog [data-r="1"]'); page.wait_for_function("document.querySelector('.qt').innerText.includes('All clear')")
+            page.fill('[data-form="qt-add"] input', txt); page.press('[data-form="qt-add"] input', "Enter"); page.wait_for_function(f"document.querySelector('.td-now').innerText.includes({json.dumps(txt)})")
+        page.click('.td-now .qt-i:has-text("Pay DEWA bill") [data-act="qt-toggle"]'); page.wait_for_timeout(300)
+        page.click('.td-now .qt-i:has-text("Book car service") [data-act="qt-toggle"]'); page.wait_for_timeout(300)
+        d = page.inner_text(".td-day >> nth=0")
+        check(f"[{tag}] diary today: 2 added, done count, finished-earlier item listed", "Today" in d and "2 added" in d and "2 done" in d and "Book car service" in d and "finished this day" in d.lower(), d[:400])
+        check(f"[{tag}] diary keeps yesterday with still-pending", "Yesterday" in page.inner_text("#view") and "still pending" in page.inner_text("#view"))
+        shot(page, f"{tag}-9-todo", True)
+        page.click('.td-now .qt-i:has-text("Call Saags") [data-act="qt-del"]'); page.click('#dialog [data-r="1"]'); page.wait_for_function("!document.querySelector('.td-now').innerText.includes('Call Saags')")
         check(f"[{tag}] delete asks to confirm then removes", True)
+        page.goto(BASE + "/#/home"); page.wait_for_selector(".sw-kpis")
         shot(page, f"{tag}-1-home", True)
         page.click(".sw-ws >> nth=1"); page.wait_for_selector(".sw-table")
         check(f"[{tag}] workspace dashboard shows open project", "Kite BOM delivery" in page.inner_text(".sw-table"))

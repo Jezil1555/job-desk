@@ -16,6 +16,7 @@ let rerenderPage = () => {};
 /* ---------------- data ---------------- */
 export function loadInv(force = false) {
   if (inv.loading && !force) return inv.loading;
+  const seq = (inv.seq = (inv.seq || 0) + 1);
   inv.loading = (async () => {
     const q = await Promise.all([
       sb.from("inv_entities").select("*").order("sort").order("created_at"),
@@ -26,6 +27,7 @@ export function loadInv(force = false) {
       sb.from("inv_documents").select("*").order("created_at", { ascending: false }).limit(2000),
       sb.from("inv_daily_sales").select("id, entity_id, day, amount").order("day").limit(50000)
     ]);
+    if (seq !== inv.seq) return; // a newer load started; drop these older results
     const err = q.find(r => r.error);
     if (err) { inv.error = err.error.message; inv.loading = null; rerenderPage(); return; }
     [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs, inv.daily] = q.map(r => r.data || []);
