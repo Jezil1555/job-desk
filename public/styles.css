@@ -1139,3 +1139,17 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .td-strip svg { width: 18px; height: 18px; color: var(--accent); }
 :root[data-theme="dark"] .td-strip { background: #2e2a1a; border-color: #4a4224; }
 @media (max-width: 860px) { .td-k { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bottomnav span { font-size: .66rem; } }
+.qt-addf { display: grid; gap: 8px; }
+.qt-more-f { display: grid; gap: 8px; }
+.qt-more-f .input { background: var(--surface); }
+.qt-toggle-d { justify-self: start; padding: 0; font-size: .82rem; }
+.qt-t > span { cursor: pointer; }
+.qt-t { cursor: default; }
+.qt-note { margin: 4px 0 0; font-size: .86rem; color: var(--ink-2); white-space: pre-wrap; }
+.qt-sub { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.qt-sub li { display: flex; align-items: center; gap: 8px; font-size: .88rem; }
+.qt-sub li.on span { text-decoration: line-through; color: var(--muted); }
+.qt-subc { width: 18px; height: 18px; border-radius: 5px; border: 1.6px solid var(--line-2); background: var(--surface); display: grid; place-items: center; padding: 0; cursor: pointer; flex: none; }
+.qt-subc.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+.qt-subc svg { width: 12px; height: 12px; stroke-width: 2.8; }
+.qt-i { align-items: flex-start; } .qt-i > .sw-check { margin-top: 2px; } .qt-i > .sw-del { margin-top: -2px; }

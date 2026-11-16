@@ -2,7 +2,7 @@
 // Items stay open (and keep showing) until ticked off; each shows the day it was added.
 import { esc, fmtDate, todayISO, zonedDate, daysFromToday } from "../util.js";
 import { state, emit } from "../store.js";
-import { ICON, toast, toastError, dialog } from "../ui.js";
+import { ICON, toast, toastError, dialog, openSheet, sheetHead, closeSheet, busy } from "../ui.js";
 import { sb, run } from "../api.js";
 
 export async function loadQuickTodos() {
@@ -39,12 +39,15 @@ export function quickTodoCard() {
 }
 
 const fmtTime = iso => new Intl.DateTimeFormat("en-GB", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: state.tz }).format(new Date(iso));
+const splitItems = v => String(v || "").split("\n").map(x => x.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim()).filter(Boolean).slice(0, 100);
 const upsertLocal = row => { const i = state.quick.findIndex(x => x.id === row.id); if (i >= 0) state.quick[i] = row; else state.quick.push(row); emit("data"); };
 
 export async function handleQuickSubmit(form) {
   if (form.dataset.form !== "qt-add") return false;
   const text = form.elements.text.value.trim(); if (!text) return true;
-  const r = await run(sb.from("quick_todos").insert({ text, user_id: state.user.id }).select().single());
+  const note = form.elements.note ? form.elements.note.value.trim() || null : null;
+  const items = form.elements.items ? splitItems(form.elements.items.value).map(x => ({ text: x, done: false })) : [];
+  const r = await run(sb.from("quick_todos").insert({ text, note, items, user_id: state.user.id }).select().single());
   if (r.error) { toastError(r.error); return true; }
   upsertLocal(r.data);
   setTimeout(() => { const i = document.querySelector('[data-form="qt-add"] input'); if (i) i.focus(); }, 30);
@@ -53,6 +56,7 @@ export async function handleQuickSubmit(form) {
 export async function handleQuickClick(act, el) {
   if (!act.startsWith("qt-")) return false;
   const id = el.dataset.id, t = (state.quick || []).find(x => x.id === id);
+  if (act === "qt-details") { state.ui.qtDetails = !state.ui.qtDetails; emit("data"); setTimeout(() => { const n = document.querySelector('[data-form="qt-add"] [name=note]'); if (n) n.focus(); }, 30); return true; }
   if (act === "qt-showdone") { state.ui.qtShowDone = !state.ui.qtShowDone; emit("data"); return true; }
   if (act === "qt-day-clear") { state.ui.todoDay = null; emit("data"); return true; }
   if (act === "qt-more-days") { state.ui.todoSpan = (state.ui.todoSpan || 14) + 30; emit("data"); return true; }
@@ -61,9 +65,11 @@ export async function handleQuickClick(act, el) {
     const r = await run(sb.from("quick_todos").update({ done_at: t.done_at ? null : new Date().toISOString() }).eq("id", id).select().single());
     if (r.error) toastError(r.error); else { upsertLocal(r.data); if (r.data.done_at) toast("Done"); }
   }
-  if (act === "qt-edit") {
-    const v = await dialog({ title: "Edit to-do", input: { label: "To-do", value: t.text, required: true }, confirm: "Save" });
-    if (v && v.trim() && v.trim() !== t.text) { const r = await run(sb.from("quick_todos").update({ text: v.trim() }).eq("id", id).select().single()); if (r.error) toastError(r.error); else upsertLocal(r.data); }
+  if (act === "qt-edit") editSheet(t);
+  if (act === "qt-sub") {
+    const items = (Array.isArray(t.items) ? t.items : []).map((x, i) => i === Number(el.dataset.i) ? { ...x, done: !x.done } : x);
+    const r = await run(sb.from("quick_todos").update({ items }).eq("id", id).select().single());
+    if (r.error) toastError(r.error); else { upsertLocal(r.data); if (!t.done_at && items.length && items.every(x => x.done)) toast("All sub-items done — tick the to-do when you're ready"); }
   }
   if (act === "qt-del") {
     if (!await dialog({ title: "Delete this to-do?", text: `"${t.text}" — this can't be undone.`, confirm: "Delete", danger: true })) return true;
@@ -78,6 +84,11 @@ const dayOf = iso => zonedDate(iso, state.tz);
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dayTitle = (d, today) => d === today ? "Today" : d === addDays(today, -1) ? "Yesterday" : fmtDate(d, { weekday: "long", day: "numeric", month: "long", year: d.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
 
+function details(t) {
+  const items = Array.isArray(t.items) ? t.items : [];
+  return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
+}
+const subCount = t => { const it = Array.isArray(t.items) ? t.items : []; if (!it.length) return ""; const d = it.filter(x => x.done).length; return ` · <span class="${d === it.length ? "ok-text" : "faint"}">${d}/${it.length} sub-items</span>`; };
 function itemRow(t, today, { showAdded = true } = {}) {
   const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
   const meta = done
@@ -85,7 +96,7 @@ function itemRow(t, today, { showAdded = true } = {}) {
     : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
   return `<li class="qt-i ${done ? "done" : ""}">
     <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
-    <div class="qt-t" data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0"><span>${esc(t.text)}</span><small>${meta}</small></div>
+    <div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${details(t)}</div>
     <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
 }
 
@@ -109,7 +120,12 @@ export function renderTodo(view) {
       <div class="sw-kpi ok"><b class="num">${doneToday.length}</b><span>Done today</span></div>
     </div>
     <section class="qt td-now">
-      <form class="qt-add" data-form="qt-add"><input class="input" name="text" maxlength="500" placeholder="Add something to do today…" autocomplete="off"><button class="btn sm primary">${ICON.plus}Add</button></form>
+      <form class="qt-addf" data-form="qt-add">
+        <div class="qt-add"><input class="input" name="text" maxlength="500" placeholder="Add something to do today…" autocomplete="off"><button class="btn sm primary">${ICON.plus}Add</button></div>
+        ${state.ui.qtDetails ? `<div class="qt-more-f"><textarea class="input" name="note" rows="2" maxlength="4000" placeholder="Description (optional)"></textarea>
+          <textarea class="input" name="items" rows="3" placeholder="Sub-items (optional) — one per line, e.g.&#10;DSV - materials disposal&#10;Adnov - KSA warehouse&#10;QBH"></textarea></div>` : ""}
+        <button type="button" class="linkbtn qt-toggle-d" data-act="qt-details">${state.ui.qtDetails ? "− Hide description & sub-items" : "+ Description / sub-items (optional)"}</button>
+      </form>
       ${open.length ? group("Pending from yesterday", fromY, "y") + group("Older, still pending", older, "o") + group("Today", todays) : `<p class="qt-empty">Nothing pending. 🎉</p>`}
     </section>
     <section class="sw-sect">
@@ -137,4 +153,27 @@ export function quickTodoSummary() {
 export async function handleTodoChange(e) {
   if (e.target.id !== "td-day") return false;
   state.ui.todoDay = e.target.value || null; emit("data"); return true;
+}
+
+function editSheet(t) {
+  const items = Array.isArray(t.items) ? t.items : [];
+  openSheet(sh => {
+    sh.innerHTML = sheetHead("Edit to-do") + `<form class="sh-body" id="qtEdit">
+      <label class="field"><span>To-do</span><input class="input" name="text" value="${esc(t.text)}" maxlength="500" required></label>
+      <label class="field"><span>Description (optional)</span><textarea class="input" name="note" rows="3" maxlength="4000">${esc(t.note || "")}</textarea></label>
+      <label class="field"><span>Sub-items (optional, one per line)</span><textarea class="input" name="items" rows="5">${esc(items.map(x => x.text).join("\n"))}</textarea></label>
+      <p class="hint">Sub-items you keep stay ticked if they were done.</p>
+      <div class="sheet-foot"><button class="btn primary block">Save</button></div></form>`;
+    sh.querySelector("#qtEdit").onsubmit = async e => {
+      e.preventDefault(); e.stopPropagation();
+      const f = e.target, b = f.querySelector(".primary");
+      const prev = new Map(items.map(x => [x.text.toLowerCase(), !!x.done]));
+      const next = splitItems(f.items.value).map(x => ({ text: x, done: prev.get(x.toLowerCase()) || false }));
+      busy(b);
+      const r = await run(sb.from("quick_todos").update({ text: f.text.value.trim(), note: f.note.value.trim() || null, items: next }).eq("id", t.id).select().single());
+      busy(b, false);
+      if (r.error) return toastError(r.error);
+      upsertLocal(r.data); closeSheet();
+    };
+  });
 }
