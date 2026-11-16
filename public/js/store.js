@@ -2,7 +2,7 @@
 export const state = {
   user: null, me: null, prefs: {}, tz: "Asia/Qatar",
   workspaces: [], members: [], profiles: {}, projects: [], health: [], milestones: [],
-  tasks: [], steps: [], deps: [], followUps: [], contacts: [], notifications: [], lastComments: [], activity: [],
+  tasks: [], steps: [], quick: [], deps: [], followUps: [], contacts: [], notifications: [], lastComments: [], activity: [],
   notes: [], documents: [], links: [], goals: [], habits: [], habitLogs: [], healthLogs: [], reviews: [],
   taskById: new Map(), healthById: new Map(),
   loaded: false, route: { name: "home", params: {} },

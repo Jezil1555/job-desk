@@ -1104,3 +1104,20 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .iv-retline { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 10px; align-items: center; }
 .grid3 { display: grid; gap: 10px; } @media (min-width: 560px) { .grid3 { grid-template-columns: 1fr 1fr 1fr; } }
 @media (max-width: 700px) { .iv-card-n b { font-size: 1rem; } .iv-kpi b { font-size: 1.25rem; } .iv-fbtns { margin-left: 0; } }
+
+/* ---------- Quick to-do (sticky note on Home) ---------- */
+.qt { background: #fff8db; border: 1px solid #f0dc8c; border-radius: var(--r-lg); padding: 14px 16px; display: grid; gap: 10px; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+:root[data-theme="dark"] .qt { background: #2e2a1a; border-color: #4a4224; }
+.qt-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.qt-h h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.qt-n { font-size: .82rem; color: var(--muted); }
+.qt-add { display: flex; gap: 8px; } .qt-add .input { flex: 1; min-height: 40px; background: var(--surface); }
+.qt-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.qt-i { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed rgba(0,0,0,.08); }
+.qt-i:first-child { border-top: 0; }
+.qt-t { flex: 1; min-width: 0; display: grid; cursor: pointer; }
+.qt-t span { overflow-wrap: anywhere; }
+.qt-t small { font-size: .76rem; }
+.qt-i.done .qt-t span { text-decoration: line-through; color: var(--muted); }
+.qt-empty { color: var(--muted); font-size: .88rem; padding: 4px 0; }
+.qt-more { justify-self: start; padding: 0; }

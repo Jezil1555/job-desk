@@ -31,6 +31,7 @@ import { renderTasks, handleTasksChange, handleTasksClick, bindBoard } from "./v
 import { renderWall, enterWall, leaveWall, handleWallClick, handleWallKey } from "./views/wall.js";
 import { renderWorkspaces, renderWorkspace, renderProject } from "./views/workspaces.js";
 import { handleIoClick, handleIoChange } from "./views/simpleio.js";
+import { handleQuickClick, handleQuickSubmit } from "./views/quicktodo.js";
 import { renderInvestors, handleInvClick, handleInvChange, handleInvSubmit } from "./views/investors.js";
 import { renderSimpleHome, renderSimpleWorkspace, renderSimpleProject, handleSimpleClick, handleSimpleSubmit, simpleCapture } from "./views/simple.js";
 import { renderCalendar, handleCalendarClick, renderFollowUps, renderSearch, runSearch, renderAlerts, renderSettings, handleSettingsChange, handleSettingsClick, renderPlanned, pushSupported, snoozeAlert, applyTheme } from "./views/other.js";
@@ -140,6 +141,7 @@ document.addEventListener("click", async e => {
   const act = el.dataset.act;
   if (el.tagName === "A" && !["apply-view", "close-sheet", "filter-ws"].includes(act)) e.preventDefault();
   if (act === "open-task" && e.target.closest("[data-act]") !== el) return;
+  if (await handleQuickClick(act, el)) return;
   if (await handleSimpleClick(act, el)) return;
   if (await handleIoClick(act, el)) return;
   if (await handleInvClick(act, el)) return;
@@ -248,6 +250,7 @@ document.addEventListener("submit", async e => {
   const form = e.target;
   if (form.id === "authForm") return submitAuth();
   if (form.id === "topSearchForm") { location.hash = "#/search"; return; }
+  if (await handleQuickSubmit(form)) return;
   if (await handleSimpleSubmit(form)) return;
   if (await handleInvSubmit(form)) return;
   if (await handleCaptureSubmit(form)) return;

@@ -1,3 +1,4 @@
+import { loadQuickTodos } from "./views/quicktodo.js";
 // Data access: one Supabase client, one loader, and small write helpers.
 // Every write waits for the server before the UI reports success.
 import { friendlyError } from "./util.js";
@@ -50,6 +51,7 @@ export async function loadAll() {
   // steps (task milestones) load on their own so an older database without the table still opens
   const stq = await sb.from("task_steps").select("*").order("sort").order("created_at").limit(10000);
   state.steps = stq.error ? [] : (stq.data || []);
+  await loadQuickTodos();
   state.profiles = {}; prof.forEach(p => (state.profiles[p.id] = p));
   state.me = state.profiles[uid] || { id: uid, email: state.user.email, display_name: "", timezone: "Asia/Qatar", prefs: {} };
   state.prefs = Object.assign({ dashboard_hidden: [], saved_views: [], default_ws: null, task_sort: "smart", task_mode: "list" }, state.me.prefs || {});

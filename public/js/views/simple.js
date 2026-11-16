@@ -4,6 +4,7 @@ import { esc, fmtDate, todayISO, daysFromToday, ago, zonedDate, zonedToISO } fro
 import { state, emit, wsById, projectById, canWrite, isWsOwner, activeWorkspaces, nameOf } from "../store.js";
 import { ICON, emptyState, toast, toastError, dialog, openSheet, sheetHead, closeSheet, busy } from "../ui.js";
 import { sb, run, reindex, reopenTask, updateTask } from "../api.js";
+import { quickTodoCard } from "./quicktodo.js";
 
 const PRIO = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
 const today = () => todayISO(state.tz);
@@ -78,6 +79,7 @@ export function renderSimpleHome(view) {
     .slice(0, 8);
   view.innerHTML = `<div class="sw">
     <div class="sw-head"><div><h1>${hello}${first ? ", " + esc(first) : ""}</h1><p class="sub">${fmtDate(today(), { weekday: "long", day: "numeric", month: "long" })}</p></div></div>
+    ${quickTodoCard()}
     <div class="sw-kpis sw-hk">
       ${kpi("Workspaces", wss.length)}${kpi("Open projects", sum("open"))}${kpi("Closed projects", sum("closed"))}${kpi("Critical", sum("critical"), "crit")}${kpi("Overdue", sum("overdue"), "bad")}
     </div>

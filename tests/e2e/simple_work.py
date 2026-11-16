@@ -694,11 +694,18 @@ def _fake(route, body):
 with sync_playwright() as pw:
     b = pw.chromium.launch()
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
-        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []
+        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = []
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
         page.goto(BASE + "/#/home"); page.wait_for_selector(".sw-kpis", timeout=10000)
         check(f"[{tag}] home shows workspace cards", page.locator(".sw-ws").count() >= 3)
+        for txt in ["Call Saags about cargo pants", "Pay DEWA bill"]:
+            page.fill('[data-form="qt-add"] input', txt); page.press('[data-form="qt-add"] input', "Enter"); page.wait_for_function(f"document.querySelector('.qt').innerText.includes({json.dumps(txt)})")
+        check(f"[{tag}] quick to-do shows 2 open with added date", "2 open" in page.inner_text(".qt") and "Added today" in page.inner_text(".qt"))
+        page.click('.qt-i:has-text("Pay DEWA bill") [data-act="qt-toggle"]'); page.wait_for_function("document.querySelector('.qt').innerText.includes('1 done today')")
+        check(f"[{tag}] ticking moves it to done, other stays open", "1 open" in page.inner_text(".qt") and "Call Saags" in page.inner_text(".qt-list"))
+        page.click('.qt-i:has-text("Call Saags") [data-act="qt-del"]'); page.click('#dialog [data-r="1"]'); page.wait_for_function("document.querySelector('.qt').innerText.includes('All clear')")
+        check(f"[{tag}] delete asks to confirm then removes", True)
         shot(page, f"{tag}-1-home", True)
         page.click(".sw-ws >> nth=1"); page.wait_for_selector(".sw-table")
         check(f"[{tag}] workspace dashboard shows open project", "Kite BOM delivery" in page.inner_text(".sw-table"))
@@ -766,7 +773,7 @@ with sync_playwright() as pw:
         ctx.close()
     # ---------- Investor Portal ----------
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
-        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []
+        DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = []
         for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales"]: DB[t] = []
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
