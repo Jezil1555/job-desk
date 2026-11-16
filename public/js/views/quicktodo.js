@@ -89,14 +89,14 @@ function details(t) {
   return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
 }
 const subCount = t => { const it = Array.isArray(t.items) ? t.items : []; if (!it.length) return ""; const d = it.filter(x => x.done).length; return ` · <span class="${d === it.length ? "ok-text" : "faint"}">${d}/${it.length} sub-items</span>`; };
-function itemRow(t, today, { showAdded = true } = {}) {
+function itemRow(t, today, { showAdded = true, compact = false } = {}) {
   const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
   const meta = done
     ? `<span class="ok-text">Done ${dd === ad ? "same day" : fmtDate(dd, { day: "numeric", month: "short" })} · ${fmtTime(t.done_at)}</span>${showAdded && dd !== ad ? ` <span class="faint">· added ${fmtDate(ad, { day: "numeric", month: "short" })}</span>` : ""}`
     : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
   return `<li class="qt-i ${done ? "done" : ""}">
     <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
-    <div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${details(t)}</div>
+    <div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
     <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
 }
 
@@ -132,14 +132,17 @@ export function renderTodo(view) {
     <section class="sw-sect">
       <div class="sw-sect-h"><h2>Diary</h2><span class="td-jump"><input class="input sm" type="date" id="td-day" max="${today}" value="${jump || ""}" aria-label="Go to date">${jump ? `<button class="linkbtn" data-act="qt-day-clear">Show all days</button>` : ""}</span></div>
       ${shown.length ? shown.map(d => {
-        const addedD = all.filter(t => dayOf(t.created_at) === d).sort((a, b) => a.created_at.localeCompare(b.created_at));
+        const addedAll = all.filter(t => dayOf(t.created_at) === d).sort((a, b) => a.created_at.localeCompare(b.created_at));
+        // today's pending items are already in the list above, so the diary only logs what got done today
+        const addedD = d === today ? addedAll.filter(t => t.done_at) : addedAll;
         const doneD = all.filter(t => t.done_at && dayOf(t.done_at) === d && dayOf(t.created_at) !== d).sort((a, b) => a.done_at.localeCompare(b.done_at));
         const stillOpen = addedD.filter(t => !t.done_at).length, doneCount = all.filter(t => t.done_at && dayOf(t.done_at) === d).length;
         return `<div class="td-day">
           <div class="td-day-h"><h3>${dayTitle(d, today)}${d === today || d === yday ? ` <small class="faint">${fmtDate(d, { day: "numeric", month: "short" })}</small>` : ""}</h3>
-            <span class="td-sum">${addedD.length ? `${addedD.length} added` : ""}${doneCount ? `${addedD.length ? " · " : ""}<span class="ok-text">${doneCount} done</span>` : ""}${stillOpen ? ` · <span class="bad-text">${stillOpen} still pending</span>` : ""}</span></div>
-          ${addedD.length ? `<ul class="qt-list">${addedD.map(t => itemRow(t, today, { showAdded: false })).join("")}</ul>` : ""}
-          ${doneD.length ? `<p class="td-sub">Finished this day (added earlier)</p><ul class="qt-list">${doneD.map(t => itemRow(t, today)).join("")}</ul>` : ""}
+            <span class="td-sum">${addedAll.length ? `${addedAll.length} added` : ""}${doneCount ? `${addedAll.length ? " · " : ""}<span class="ok-text">${doneCount} done</span>` : ""}${stillOpen ? ` · <span class="bad-text">${stillOpen} still pending</span>` : ""}</span></div>
+          ${addedD.length ? `<ul class="qt-list">${addedD.map(t => itemRow(t, today, { showAdded: false, compact: true })).join("")}</ul>` : ""}
+          ${doneD.length ? `<p class="td-sub">Finished this day (added earlier)</p><ul class="qt-list">${doneD.map(t => itemRow(t, today, { compact: true })).join("")}</ul>` : ""}
+          ${d === today && !addedD.length && !doneD.length ? `<p class="hint td-none">Nothing finished yet today — pending items are in the list above.</p>` : ""}
         </div>`;
       }).join("") : `<div class="sw-empty">${jump ? "Nothing was added or finished on this day." : "Your diary fills up as you add and finish to-dos."}</div>`}
       ${olderLeft ? `<button class="btn block" data-act="qt-more-days">Show older days</button>` : ""}

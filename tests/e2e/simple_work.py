@@ -708,7 +708,7 @@ with sync_playwright() as pw:
         page.click('.td-now .qt-i:has-text("Pay DEWA bill") [data-act="qt-toggle"]'); page.wait_for_timeout(300)
         page.click('.td-now .qt-i:has-text("Book car service") [data-act="qt-toggle"]'); page.wait_for_timeout(300)
         d = page.inner_text(".td-day >> nth=0")
-        check(f"[{tag}] diary today: 2 added, done count, finished-earlier item listed", "Today" in d and "2 added" in d and "2 done" in d and "Book car service" in d and "finished this day" in d.lower(), d[:400])
+        check(f"[{tag}] diary today: counts, only finished items (no repeat of pending)", "Today" in d and "2 added" in d and "2 done" in d and "Book car service" in d and "Pay DEWA bill" in d and "Call Saags" not in d and "finished this day" in d.lower(), d[:400])
         check(f"[{tag}] diary keeps yesterday with still-pending", "Yesterday" in page.inner_text("#view") and "still pending" in page.inner_text("#view"))
         page.click('[data-act="qt-details"]'); page.wait_for_selector('[data-form="qt-add"] [name=items]')
         page.fill('[data-form="qt-add"] [name=text]', "Pending PO's"); page.fill('[data-form="qt-add"] [name=note]', "Close before month end")
