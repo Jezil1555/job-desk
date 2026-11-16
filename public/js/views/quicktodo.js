@@ -47,8 +47,8 @@ export async function handleQuickSubmit(form) {
   const text = form.elements.text.value.trim(); if (!text) return true;
   const note = form.elements.note ? form.elements.note.value.trim() || null : null;
   const items = form.elements.items ? splitItems(form.elements.items.value).map(x => ({ text: x, done: false })) : [];
-  const critical = !!(form.elements.critical && form.elements.critical.checked);
-  const r = await run(sb.from("quick_todos").insert({ text, note, items, critical, user_id: state.user.id }).select().single());
+  const priority = (form.elements.priority && form.elements.priority.value) || null;
+  const r = await run(sb.from("quick_todos").insert({ text, note, items, priority, user_id: state.user.id }).select().single());
   if (r.error) { toastError(r.error); return true; }
   upsertLocal(r.data);
   setTimeout(() => { const i = document.querySelector('[data-form="qt-add"] input'); if (i) i.focus(); }, 30);
@@ -67,10 +67,7 @@ export async function handleQuickClick(act, el) {
     if (r.error) toastError(r.error); else { upsertLocal(r.data); if (r.data.done_at) toast("Done"); }
   }
   if (act === "qt-edit") editSheet(t);
-  if (act === "qt-crit") {
-    const r = await run(sb.from("quick_todos").update({ critical: !t.critical }).eq("id", id).select().single());
-    if (r.error) toastError(r.error); else { upsertLocal(r.data); toast(r.data.critical ? "Marked critical" : "No longer critical"); }
-  }
+
   if (act === "qt-sub") {
     const items = (Array.isArray(t.items) ? t.items : []).map((x, i) => i === Number(el.dataset.i) ? { ...x, done: !x.done } : x);
     const r = await run(sb.from("quick_todos").update({ items }).eq("id", id).select().single());
@@ -95,17 +92,22 @@ function details(t) {
   const items = Array.isArray(t.items) ? t.items : [];
   return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><b class="qt-letter">${letter(i)}.</b><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
 }
-export const critFirst = (a, b) => (b.critical ? 1 : 0) - (a.critical ? 1 : 0) || a.created_at.localeCompare(b.created_at);
+export const PRIO = { critical: "Critical", medium: "Medium", low: "Low" };
+const PRANK = { critical: 0, medium: 1, low: 3 }; // no priority sits between medium and low
+export const prioRank = t => PRANK[t.priority] ?? 2;
+export const critFirst = (a, b) => prioRank(a) - prioRank(b) || a.created_at.localeCompare(b.created_at);
+export const prioTag = p => p ? `<em class="qp-tag qp-${p}">${PRIO[p]}</em> ` : "";
+const prioSelect = (name, val, cls = "") => `<select class="input sm qp-sel ${cls} ${val ? "qp-" + val : ""}" name="${name}" aria-label="Priority"><option value="">No priority</option>${Object.entries(PRIO).map(([k, v]) => `<option value="${k}" ${k === val ? "selected" : ""}>${v}</option>`).join("")}</select>`;
 const subCount = t => { const it = Array.isArray(t.items) ? t.items : []; if (!it.length) return ""; const d = it.filter(x => x.done).length; return ` · <span class="${d === it.length ? "ok-text" : "faint"}">${d}/${it.length} sub-items</span>`; };
 function itemRow(t, today, { showAdded = true, compact = false, num = null } = {}) {
   const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
   const meta = done
     ? `<span class="ok-text">Done ${dd === ad ? "same day" : fmtDate(dd, { day: "numeric", month: "short" })} · ${fmtTime(t.done_at)}</span>${showAdded && dd !== ad ? ` <span class="faint">· added ${fmtDate(ad, { day: "numeric", month: "short" })}</span>` : ""}`
     : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
-  return `<li class="qt-i ${done ? "done" : ""} ${t.critical && !done ? "crit" : ""}">
+  return `<li class="qt-i ${done ? "done" : ""} ${t.priority && !done ? "qp-row qp-" + t.priority : ""}">
     <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
-    ${num !== null ? `<b class="qt-num">${num}.</b>` : ""}<div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${t.critical && !done ? `<em class="qt-crit">Critical</em> ` : ""}${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
-    ${done ? "" : `<button class="iconbtn sm qt-flag ${t.critical ? "on" : ""}" data-act="qt-crit" data-id="${t.id}" aria-label="${t.critical ? "Remove critical" : "Mark critical"}" title="${t.critical ? "Remove critical" : "Mark critical"}">${FLAG}</button>`}
+    ${num !== null ? `<b class="qt-num">${num}.</b>` : ""}<div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${!done ? prioTag(t.priority) : ""}${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
+    ${done ? "" : `<label class="qp-pick ${t.priority ? "qp-" + t.priority : ""}" title="Priority">${FLAG}<select data-qp="${t.id}" aria-label="Priority"><option value="">No priority</option>${Object.entries(PRIO).map(([k, v]) => `<option value="${k}" ${k === t.priority ? "selected" : ""}>${v}</option>`).join("")}</select></label>`}
     <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
 }
 
@@ -135,7 +137,7 @@ export function renderTodo(view) {
         <div class="qt-add"><input class="input" name="text" maxlength="500" placeholder="Add something to do today…" autocomplete="off"><button class="btn sm primary">${ICON.plus}Add</button></div>
         ${state.ui.qtDetails ? `<div class="qt-more-f"><textarea class="input" name="note" rows="2" maxlength="4000" placeholder="Description (optional)"></textarea>
           <textarea class="input" name="items" rows="3" placeholder="Sub-items (optional) — one per line, e.g.&#10;DSV - materials disposal&#10;Adnov - KSA warehouse&#10;QBH"></textarea></div>` : ""}
-        <div class="qt-addopts"><label class="qt-critc"><input type="checkbox" name="critical"> Critical</label>
+        <div class="qt-addopts">${prioSelect("priority", "")}
         <button type="button" class="linkbtn qt-toggle-d" data-act="qt-details">${state.ui.qtDetails ? "− Hide description & sub-items" : "+ Description / sub-items (optional)"}</button></div>
       </form>
       ${open.length ? group("Pending from yesterday", fromY, "y") + group("Older, still pending", older, "o") + group("Today", todays) : `<p class="qt-empty">Nothing pending. 🎉</p>`}
@@ -162,10 +164,17 @@ export function renderTodo(view) {
 }
 export function quickTodoSummary() {
   const all = state.quick || [], today = todayISO(state.tz);
-  const open = all.filter(t => !t.done_at), carried = open.filter(t => dayOf(t.created_at) < today).length, crit = open.filter(t => t.critical).length;
+  const open = all.filter(t => !t.done_at), carried = open.filter(t => dayOf(t.created_at) < today).length, crit = open.filter(t => t.priority === "critical").length;
   return `<a class="td-strip" href="#/todo">${ICON.check}<span><b>${open.length ? `${open.length} to-do${open.length === 1 ? "" : "s"} pending` : "To-do: all clear"}</b>${crit ? ` · <span class="bad-text"><b>${crit} critical</b></span>` : ""}${carried ? ` · <span class="bad-text">${carried} carried over</span>` : ""}</span><span class="faint">Open ›</span></a>`;
 }
 export async function handleTodoChange(e) {
+  if (e.target.dataset && e.target.dataset.qp !== undefined) {
+    const id = e.target.dataset.qp, priority = e.target.value || null;
+    const r = await run(sb.from("quick_todos").update({ priority }).eq("id", id).select().single());
+    if (r.error) toastError(r.error); else { upsertLocal(r.data); toast(priority ? `Priority: ${PRIO[priority]}` : "Priority removed"); }
+    return true;
+  }
+  if (e.target.classList && e.target.classList.contains("qp-sel")) { e.target.className = e.target.className.replace(/qp-(critical|medium|low)/g, "") + (e.target.value ? " qp-" + e.target.value : ""); return true; }
   if (e.target.id !== "td-day") return false;
   state.ui.todoDay = e.target.value || null; emit("data"); return true;
 }
@@ -175,7 +184,7 @@ function editSheet(t) {
   openSheet(sh => {
     sh.innerHTML = sheetHead("Edit to-do") + `<form class="sh-body" id="qtEdit">
       <label class="field"><span>To-do</span><input class="input" name="text" value="${esc(t.text)}" maxlength="500" required></label>
-      <label class="check qt-critc"><input type="checkbox" name="critical" ${t.critical ? "checked" : ""}> Critical — needs to be done soon</label>
+      <label class="field"><span>Priority</span>${prioSelect("priority", t.priority || "")}</label>
       <label class="field"><span>Description (optional)</span><textarea class="input" name="note" rows="3" maxlength="4000">${esc(t.note || "")}</textarea></label>
       <label class="field"><span>Sub-items (optional, one per line)</span><textarea class="input" name="items" rows="5">${esc(items.map(x => x.text).join("\n"))}</textarea></label>
       <p class="hint">Sub-items you keep stay ticked if they were done.</p>
@@ -186,7 +195,7 @@ function editSheet(t) {
       const prev = new Map(items.map(x => [x.text.toLowerCase(), !!x.done]));
       const next = splitItems(f.items.value).map(x => ({ text: x, done: prev.get(x.toLowerCase()) || false }));
       busy(b);
-      const r = await run(sb.from("quick_todos").update({ text: f.text.value.trim(), note: f.note.value.trim() || null, items: next, critical: f.critical.checked }).eq("id", t.id).select().single());
+      const r = await run(sb.from("quick_todos").update({ text: f.text.value.trim(), note: f.note.value.trim() || null, items: next, priority: f.priority.value || null }).eq("id", t.id).select().single());
       busy(b, false);
       if (r.error) return toastError(r.error);
       upsertLocal(r.data); closeSheet();
