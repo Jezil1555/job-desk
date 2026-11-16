@@ -137,7 +137,7 @@ export function subscribe(onNotification) {
   if (channel) sb.removeChannel(channel);
   const reload = () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => loadAll().catch(() => {}), 400); };
   channel = sb.channel("cc-" + state.user.id);
-  ["workspaces", "workspace_members", "projects", "milestones", "tasks", "task_steps", "task_dependencies", "task_comments", "follow_ups", "follow_up_logs", "contacts", "notes", "documents", "record_links"]
+  ["workspaces", "workspace_members", "projects", "milestones", "tasks", "task_steps", "quick_todos", "task_dependencies", "task_comments", "follow_ups", "follow_up_logs", "contacts", "notes", "documents", "record_links"]
     .forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t }, reload));
   channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${state.user.id}` }, p => {
     if (!state.notifications.some(n => n.id === p.new.id)) state.notifications.unshift(p.new);

@@ -112,7 +112,8 @@ export function renderTodo(view) {
   const olderLeft = !jump && dates.some(d => d <= addDays(today, -span));
   const group = (title, items, cls = "") => items.length ? `<div class="td-g ${cls}"><h3>${title} <span class="c">${items.length}</span></h3><ul class="qt-list">${items.map(t => itemRow(t, today)).join("")}</ul></div>` : "";
   view.innerHTML = `<div class="sw td">
-    <div class="sw-head"><div><h1>To-do</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long" })} · your private daily list</p></div></div>
+    <div class="sw-head"><div><h1>To-do</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long" })} · your private daily list</p></div>
+      <div class="sw-actions"><a class="btn" href="#/board" target="_blank" rel="noopener" title="Open the whiteboard in a new window for your other screen">${ICON.grid || ICON.tasks}Whiteboard</a></div></div>
     <div class="sw-kpis td-k">
       <div class="sw-kpi"><b class="num">${open.length}</b><span>Pending now</span></div>
       <div class="sw-kpi ${fromY.length + older.length ? "bad" : ""}"><b class="num">${fromY.length + older.length}</b><span>Carried over</span></div>

@@ -1153,3 +1153,28 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .qt-subc.on { background: var(--ok); border-color: var(--ok); color: #fff; }
 .qt-subc svg { width: 12px; height: 12px; stroke-width: 2.8; }
 .qt-i { align-items: flex-start; } .qt-i > .sw-check { margin-top: 2px; } .qt-i > .sw-del { margin-top: -2px; }
+/* Whiteboard of pending jobs (#/board) */
+.wb .wall-head { background: var(--surface); }
+.wb-add { padding: 12px 24px 0; flex: none; }
+.wb-add .input { font-size: 1.1rem; min-height: 48px; border-style: dashed; background: var(--surface); }
+.wb-cols { grid-auto-columns: minmax(280px, 1fr); }
+.wcol.c-old { --wc: var(--bad); } .wcol.c-today { --wc: #e0b400; } .wcol.c-proj { --wc: var(--accent); } .wcol.c-done { --wc: var(--ok); }
+.wnote { background: #fff6c7; border: 1px solid #efdc85; border-radius: 6px; padding: 12px 14px; box-shadow: 0 2px 6px rgba(80,60,0,.08); display: grid; gap: 6px; }
+.wnote.y { background: #ffe9b8; border-color: #f0c870; }
+.wnote.old { background: #ffd9cf; border-color: #f2a993; }
+:root[data-theme="dark"] .wnote { background: #3a3420; border-color: #57502c; } :root[data-theme="dark"] .wnote.old { background: #46261f; border-color: #6b3a2e; }
+.wn-top { display: flex; gap: 10px; align-items: flex-start; }
+.wn-title { font-size: 1.12rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.wn-desc { font-size: .92rem; color: var(--ink-2); white-space: pre-wrap; padding-left: 34px; }
+.wn-sub { padding-left: 34px; margin: 0; } .wn-sub li { font-size: .95rem; }
+.wn-meta { font-size: .76rem; color: var(--muted); padding-left: 34px; }
+.wnote.old .wn-meta { color: var(--bad); font-weight: 600; }
+.wproj { display: block; text-decoration: none; color: var(--ink); border-left: 4px solid var(--wc); }
+.wproj:hover { text-decoration: none; }
+.wproj .wc-title { font-size: 1.02rem; }
+.wc-ws { display: inline-flex; gap: 5px; align-items: center; font-size: .76rem; color: var(--muted); }
+.wc-ws .dot { width: 8px; height: 8px; border-radius: 3px; }
+.wdone { display: flex; gap: 8px; align-items: center; padding: 6px 4px; color: var(--muted); font-size: .92rem; }
+.wdone > span:last-child { text-decoration: line-through; }
+.wdone .sw-check { width: 20px; height: 20px; flex: none; }
+.wd-ic { color: var(--ok); display: flex; } .wd-ic svg { width: 16px; height: 16px; }

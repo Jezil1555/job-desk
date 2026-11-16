@@ -280,7 +280,7 @@ on("data", () => { if (state.user) { if (!sheetOpen() || !document.activeElement
 on("notifications", () => renderNav());
 on("fin", () => { if (!state.user) return; if (state.route.name === "finance" || (state.route.name === "home" && !sheetOpen())) render(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "open" && e.data.url) location.hash = e.data.url.replace(/^\/?#?/, "#"); });
-setInterval(() => { if (state.loaded && !sheetOpen() && ["home", "tasks", "board"].includes(state.route.name)) render(); }, 60000);
+setInterval(() => { const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName) && document.activeElement.value; if (state.loaded && !sheetOpen() && !typing && ["home", "tasks", "board", "todo"].includes(state.route.name)) render(); }, 60000);
 
 /* ---------- notifications ---------- */
 async function markRead(ids) {
