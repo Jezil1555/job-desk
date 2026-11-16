@@ -1178,3 +1178,6 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .wdone > span:last-child { text-decoration: line-through; }
 .wdone .sw-check { width: 20px; height: 20px; flex: none; }
 .wd-ic { color: var(--ok); display: flex; } .wd-ic svg { width: 16px; height: 16px; }
+.qt-num { min-width: 22px; text-align: right; font-weight: 700; color: var(--accent); margin-top: 3px; font-variant-numeric: tabular-nums; }
+.qt-letter { min-width: 16px; font-weight: 600; color: var(--muted); font-size: .84rem; }
+.wn-num { color: var(--accent); }

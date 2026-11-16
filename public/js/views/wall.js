@@ -5,6 +5,7 @@ import { state, activeWorkspaces, wsById } from "../store.js";
 import { loadAll } from "../api.js";
 import { ICON } from "../ui.js";
 import { projectStats } from "./simple.js";
+import { letter } from "./quicktodo.js";
 
 const LS_PROJ = "jd-wall-projects";
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
@@ -12,14 +13,14 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch 
 
 const dayOf = iso => new Intl.DateTimeFormat("en-CA", { timeZone: state.tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 
-function todoNote(t, today) {
+function todoNote(t, today, num) {
   const ad = dayOf(t.created_at), n = Math.round((new Date(today) - new Date(ad)) / 864e5);
   const items = Array.isArray(t.items) ? t.items : [];
   const dn = items.filter(x => x.done).length;
   return `<article class="wnote ${n >= 2 ? "old" : n === 1 ? "y" : ""}">
-    <div class="wn-top"><button class="sw-check" data-act="qt-toggle" data-id="${t.id}" aria-label="Mark done"></button><div class="wn-title">${esc(t.text)}</div></div>
+    <div class="wn-top"><button class="sw-check" data-act="qt-toggle" data-id="${t.id}" aria-label="Mark done"></button><div class="wn-title"><b class="wn-num">${num}.</b> ${esc(t.text)}</div></div>
     ${t.note ? `<div class="wn-desc">${esc(t.note)}</div>` : ""}
-    ${items.length ? `<ul class="qt-sub wn-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="Tick">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}
+    ${items.length ? `<ul class="qt-sub wn-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><b class="qt-letter">${letter(i)}.</b><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="Tick">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}
     <div class="wn-meta">${n <= 0 ? "Added today" : n === 1 ? "From yesterday" : `Since ${new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(ad + "T12:00:00Z"))} · ${n} days`}${items.length ? ` · ${dn}/${items.length}` : ""}</div>
   </article>`;
 }
@@ -69,8 +70,8 @@ export function renderWall(view) {
     </header>
     <form class="wb-add" data-form="qt-add"><input class="input" name="text" maxlength="500" placeholder="Write on the board… (Enter to add a to-do)" autocomplete="off"></form>
     <div class="wall-cols wb-cols" style="--n:${showProj ? 4 : 3}">
-      ${col("Carried over", "c-old", carried.length, carried.length ? carried.map(t => todoNote(t, today)).join("") : `<div class="wcol-clear">Nothing left from earlier ✓</div>`)}
-      ${col("Today", "c-today", fresh.length, fresh.length ? fresh.map(t => todoNote(t, today)).join("") : `<div class="wcol-clear">Add today's jobs above</div>`)}
+      ${col("Carried over", "c-old", carried.length, carried.length ? carried.map((t, i) => todoNote(t, today, i + 1)).join("") : `<div class="wcol-clear">Nothing left from earlier ✓</div>`)}
+      ${col("Today", "c-today", fresh.length, fresh.length ? fresh.map((t, i) => todoNote(t, today, carried.length + i + 1)).join("") : `<div class="wcol-clear">Add today's jobs above</div>`)}
       ${showProj ? col("Project jobs", "c-proj", projs.length, projs.length ? projs.map(projectCard).join("") : `<div class="wcol-clear">No open projects</div>`, overdueP ? `<em>${overdueP} overdue</em>` : "") : ""}
       ${col("Done today", "c-done", doneToday.length + (showProj ? stepsDone.length : 0),
         (doneToday.map(t => `<div class="wdone"><button class="sw-check on" data-act="qt-toggle" data-id="${t.id}" aria-label="Undo">${ICON.check}</button><span>${esc(t.text)}</span></div>`).join("") +

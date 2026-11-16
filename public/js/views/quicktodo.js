@@ -84,19 +84,20 @@ const dayOf = iso => zonedDate(iso, state.tz);
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dayTitle = (d, today) => d === today ? "Today" : d === addDays(today, -1) ? "Yesterday" : fmtDate(d, { weekday: "long", day: "numeric", month: "long", year: d.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
 
+export const letter = i => i < 26 ? String.fromCharCode(65 + i) : String.fromCharCode(65 + Math.floor(i / 26) - 1) + String.fromCharCode(65 + (i % 26));
 function details(t) {
   const items = Array.isArray(t.items) ? t.items : [];
-  return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
+  return `${t.note ? `<p class="qt-note">${esc(t.note)}</p>` : ""}${items.length ? `<ul class="qt-sub">${items.map((x, i) => `<li class="${x.done ? "on" : ""}"><b class="qt-letter">${letter(i)}.</b><button class="qt-subc ${x.done ? "on" : ""}" data-act="qt-sub" data-id="${t.id}" data-i="${i}" aria-label="${x.done ? "Mark not done" : "Mark done"}">${x.done ? ICON.check : ""}</button><span>${esc(x.text)}</span></li>`).join("")}</ul>` : ""}`;
 }
 const subCount = t => { const it = Array.isArray(t.items) ? t.items : []; if (!it.length) return ""; const d = it.filter(x => x.done).length; return ` · <span class="${d === it.length ? "ok-text" : "faint"}">${d}/${it.length} sub-items</span>`; };
-function itemRow(t, today, { showAdded = true, compact = false } = {}) {
+function itemRow(t, today, { showAdded = true, compact = false, num = null } = {}) {
   const done = !!t.done_at, ad = dayOf(t.created_at), dd = done ? dayOf(t.done_at) : null;
   const meta = done
     ? `<span class="ok-text">Done ${dd === ad ? "same day" : fmtDate(dd, { day: "numeric", month: "short" })} · ${fmtTime(t.done_at)}</span>${showAdded && dd !== ad ? ` <span class="faint">· added ${fmtDate(ad, { day: "numeric", month: "short" })}</span>` : ""}`
     : (() => { const n = -daysFromToday(ad, state.tz); return n <= 0 ? `<span class="faint">Pending · added today</span>` : `<span class="${n === 1 ? "warn-text" : "bad-text"}">Pending · added ${n === 1 ? "yesterday" : fmtDate(ad, { day: "numeric", month: "short" }) + ` · ${n} days`}</span>`; })();
   return `<li class="qt-i ${done ? "done" : ""}">
     <button class="sw-check ${done ? "on" : ""}" data-act="qt-toggle" data-id="${t.id}" aria-label="${done ? "Mark not done" : "Mark done"}">${done ? ICON.check : ""}</button>
-    <div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
+    ${num !== null ? `<b class="qt-num">${num}.</b>` : ""}<div class="qt-t"><span data-act="qt-edit" data-id="${t.id}" role="button" tabindex="0">${esc(t.text)}</span><small>${meta}${subCount(t)}</small>${compact ? "" : details(t)}</div>
     <button class="iconbtn sm sw-del" data-act="qt-del" data-id="${t.id}" aria-label="Delete">${ICON.trash}</button></li>`;
 }
 
@@ -110,7 +111,8 @@ export function renderTodo(view) {
   const dates = [...new Set(all.flatMap(t => [dayOf(t.created_at), t.done_at ? dayOf(t.done_at) : null]).filter(Boolean))].sort().reverse();
   const shown = jump ? [jump] : dates.filter(d => d > addDays(today, -span));
   const olderLeft = !jump && dates.some(d => d <= addDays(today, -span));
-  const group = (title, items, cls = "") => items.length ? `<div class="td-g ${cls}"><h3>${title} <span class="c">${items.length}</span></h3><ul class="qt-list">${items.map(t => itemRow(t, today)).join("")}</ul></div>` : "";
+  let n = 0; // one running number across the pending groups: 1, 2, 3…
+  const group = (title, items, cls = "") => items.length ? `<div class="td-g ${cls}"><h3>${title} <span class="c">${items.length}</span></h3><ul class="qt-list">${items.map(t => itemRow(t, today, { num: ++n })).join("")}</ul></div>` : "";
   view.innerHTML = `<div class="sw td">
     <div class="sw-head"><div><h1>To-do</h1><p class="sub">${fmtDate(today, { weekday: "long", day: "numeric", month: "long" })} · your private daily list</p></div>
       <div class="sw-actions"><a class="btn" href="#/board" target="_blank" rel="noopener" title="Open the whiteboard in a new window for your other screen">${ICON.grid || ICON.tasks}Whiteboard</a></div></div>

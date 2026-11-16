@@ -719,6 +719,8 @@ with sync_playwright() as pw:
         check(f"[{tag}] to-do with description and 3 sub-items, numbering stripped, 1 ticked", "Close before month end" in q and "1/3 sub-items" in q and "1. DSV" not in q and "DSV - materials disposal" in q, q[:400])
         page.fill('[data-form="qt-add"] [name=text]', "Call QBH"); page.press('[data-form="qt-add"] [name=text]', "Enter"); page.wait_for_function("document.querySelector('.td-now').innerText.includes('Call QBH')")
         check(f"[{tag}] plain to-do without details still works", True)
+        nums = page.locator(".td-now .qt-num").all_inner_texts()
+        check(f"[{tag}] pending to-dos numbered 1..n and sub-items lettered", nums[:3] == ["1.", "2.", "3."] and page.locator(".td-now .qt-letter").all_inner_texts()[:3] == ["A.", "B.", "C."], str(nums))
         shot(page, f"{tag}-9-todo", True)
         page.click('.td-now .qt-i:has-text("Call Saags") [data-act="qt-del"]'); page.click('#dialog [data-r="1"]'); page.wait_for_function("!document.querySelector('.td-now').innerText.includes('Call Saags')")
         check(f"[{tag}] delete asks to confirm then removes", True)
