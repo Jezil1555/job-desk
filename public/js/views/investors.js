@@ -271,7 +271,7 @@ function docsTab(f, owner) {
 function settingsTab(f, owner) {
   const { e } = f, cur = e.currency;
   if (!owner) return `<section class="sw-sect"><h2>Details</h2><p>Project cost: <b>${moneyFull(e.project_cost || 0, cur)}</b></p><p class="hint">You have view-only access. The owner keeps the figures up to date.</p></section>`;
-  const mem = inv.ui.memberList && inv.ui.memberList.id === e.id ? inv.ui.memberList.rows : null;
+  const mem = inv.ui.memberList && inv.ui.memberList.id === e.id ? inv.ui.memberList.rows : null, pend = mem ? inv.ui.memberList.pending : [];
   if (!mem) loadMembers(e.id);
   return `<div class="iv-two">
     <section class="sw-sect iv-panel"><h2>Entity</h2>
@@ -286,15 +286,16 @@ function settingsTab(f, owner) {
     <section class="sw-sect iv-panel"><div class="sw-sect-h"><h2>Partners & investors</h2><button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add</button></div>
       ${f.ins.length ? `<div class="iv-docs">${f.per.map(p => `<div class="iv-doc click" data-act="inv-investor" data-id="${p.x.id}" data-entity="${e.id}" role="button" tabindex="0"><div class="tmain"><b>${esc(p.x.name)}</b>${p.x.is_me ? ` <span class="chip">Me</span>` : ""}<small class="faint">${p.cap ? `${moneyFull(p.x.amount, cur)} · ${p.share}% of capital` : "No capital"}${p.equity !== null ? ` · ${p.equity}% equity` : ""}</small></div><span class="faint">Edit</span></div>`).join("")}</div>` : `<p class="hint">No investors yet.</p>`}
       <h2 class="iv-h2">Shared with</h2>
-      <p class="hint">People you add here can see this entity only — read-only. They can't see your other entities, workspaces or Finance. They need a J. Desk account first.</p>
-      ${mem ? `<div class="iv-docs">${mem.map(m => `<div class="iv-doc"><div class="tmain"><b>${esc(m.display_name || m.email)}</b><small class="faint">${esc(m.email)} · ${m.role === "owner" ? "Owner" : "View only"}</small></div>${m.role === "viewer" ? `<button class="btn sm danger" data-act="inv-unshare" data-entity="${e.id}" data-user="${m.user_id}">Remove</button>` : ""}</div>`).join("")}</div>` : `<p class="hint">Loading…</p>`}
+      <p class="hint">People you add here can see this entity only — read-only. They can't see your other entities, workspaces or Finance. If they haven't signed up yet, they get access as soon as they do.</p>
+      ${mem ? `<div class="iv-docs">${mem.map(m => `<div class="iv-doc"><div class="tmain"><b>${esc(m.display_name || m.email)}</b><small class="faint">${esc(m.email)} · ${m.role === "owner" ? "Owner" : "View only"}</small></div>${m.role === "viewer" ? `<button class="btn sm danger" data-act="inv-unshare" data-entity="${e.id}" data-user="${m.user_id}">Remove</button>` : ""}</div>`).join("")}
+        ${pend.map(p => `<div class="iv-doc"><div class="tmain"><b>${esc(p.email)}</b><small class="faint">Invited · gets view-only access when they sign up</small></div><button class="btn sm danger" data-act="inv-uninvite" data-entity="${e.id}" data-email="${esc(p.email)}">Cancel</button></div>`).join("")}</div>` : `<p class="hint">Loading…</p>`}
       <form class="iv-share" id="inv-share-form" data-id="${e.id}"><input class="input" type="email" name="email" placeholder="partner@email.com" required autocomplete="off"><button class="btn">Share</button></form>
     </section></div>
     <section class="sw-sect iv-danger"><h2>Delete entity</h2><p class="hint">Deletes this entity with all its investors, sales, returns and documents, for everyone it's shared with.</p><button class="btn danger" data-act="inv-delete" data-id="${e.id}">${ICON.trash}Delete entity</button></section>`;
 }
 async function loadMembers(id) {
-  const r = await run(sb.rpc("inv_member_list", { p_entity: id }));
-  inv.ui.memberList = { id, rows: r.data || [] }; rerenderPage();
+  const [r, p] = await Promise.all([run(sb.rpc("inv_member_list", { p_entity: id })), run(sb.from("inv_pending_invites").select("email, created_at").eq("entity_id", id))]);
+  inv.ui.memberList = { id, rows: r.data || [], pending: p.data || [] }; rerenderPage();
 }
 
 /* ---------------- sheets (forms) ---------------- */
@@ -616,6 +617,11 @@ export async function handleInvClick(act, el) {
       const r = await run(sb.from("inv_members").delete().eq("entity_id", ent).eq("user_id", el.dataset.user)); if (r.error) { toastError(r.error); break; }
       inv.ui.memberList = null; await loadInv(true); toast("Access removed"); break;
     }
+    case "inv-uninvite": {
+      if (!await dialog({ title: "Cancel this invite?", text: `${el.dataset.email} won't get access when they sign up.`, confirm: "Cancel invite", danger: true })) break;
+      const r = await run(sb.from("inv_pending_invites").delete().eq("entity_id", ent).eq("email", el.dataset.email)); if (r.error) { toastError(r.error); break; }
+      inv.ui.memberList = null; rerenderPage(); toast("Invite cancelled"); break;
+    }
     case "inv-delete": {
       const e = entity(id);
       const typed = await dialog({ title: `Delete "${e.name}" permanently?`, text: "All investors, sales, returns and documents are deleted, for everyone it's shared with. Type the entity name to confirm.", input: { label: "Entity name", required: true }, confirm: "Delete permanently", danger: true });
@@ -656,7 +662,7 @@ export async function handleInvSubmit(form) {
     const r = await run(sb.rpc("inv_add_viewer", { p_entity: form.dataset.id, p_email: form.elements.email.value }));
     busy(b, false);
     if (r.error) { toastError(/not_registered/.test(r.raw && r.raw.message || r.error) ? "No J. Desk account with that email. Ask them to sign up first, then share again." : r.error); return true; }
-    inv.ui.memberList = null; await loadInv(true); toast(`Shared with ${r.data.email} (view only)`); return true;
+    inv.ui.memberList = null; await loadInv(true); toast(r.data.pending ? `Invited ${r.data.email} — they'll get access when they sign up` : `Shared with ${r.data.email} (view only)`); return true;
   }
   return false;
 }
