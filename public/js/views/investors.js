@@ -31,6 +31,16 @@ export function loadInv(force = false) {
     const err = q.find(r => r.error);
     if (err) { inv.error = err.error.message; inv.loading = null; rerenderPage(); return; }
     [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs, inv.daily] = q.map(r => r.data || []);
+    // linked entities (e.g. a sub-investor group) read the outlet's sales from their main entity
+    const linked = inv.entities.filter(e => e.sales_from);
+    const ls = await Promise.all(linked.map(e => sb.rpc("inv_linked_sales", { p_entity: e.id })));
+    if (seq !== inv.seq) return;
+    linked.forEach((e, i) => {
+      const d = ls[i].data; if (!d) return;
+      e._source = d.source_name;
+      inv.sales = inv.sales.filter(x => x.entity_id !== e.id).concat((d.sales || []).map(x => ({ ...x, entity_id: e.id, _linked: true })));
+      inv.daily = inv.daily.filter(x => x.entity_id !== e.id).concat((d.daily || []).map(x => ({ ...x, entity_id: e.id })));
+    });
     inv.loaded = true; inv.error = null; inv.loading = null; rerenderPage();
   })();
   return inv.loading;
@@ -221,7 +231,7 @@ function salesTab(f, owner) {
   const best = ss.reduce((b, s) => !b || Number(s.sales) > Number(b.sales) ? s : b, null);
   return `<div class="iv-filters"><label class="field-inline">Show <select class="input sm" id="inv-sales-range">
       ${[["6m", "Last 6 months"], ["12m", "Last 12 months"], ["all", "All time"], ...years.map(y => [y, y])].map(([k, v]) => `<option value="${k}" ${k === r ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-      ${owner ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-sale" data-entity="${e.id}">${ICON.plus}Add month</button><button class="btn sm" data-act="inv-sales-import" data-entity="${e.id}">${ICON.download}Upload Excel</button></span>` : ""}</div>
+      ${e.sales_from ? `<span class="iv-fbtns hint">Sales and P&L come from <b>${esc(e._source || "the main entity")}</b>${owner ? " — update them there" : ""}.</span>` : owner ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-sale" data-entity="${e.id}">${ICON.plus}Add month</button><button class="btn sm" data-act="inv-sales-import" data-entity="${e.id}">${ICON.download}Upload Excel</button></span>` : ""}</div>
     <div class="sw-kpis iv-kpis">${tile("Sales", money(tSales, cur), `${ss.length} month${ss.length === 1 ? "" : "s"}`)}${tile("Expenses", money(tExp, cur))}${tile("Net profit", money(tProfit, cur), tSales ? `${pct(tProfit, tSales)}% margin` : "", tProfit < 0 ? "bad" : "ok")}${tile("Best month", best ? money(best.sales, cur) : "—", best ? monthLabel(best.month, true) : "")}</div>
     <div class="iv-two">
       <section class="sw-sect"><h2>Sales trend</h2><div class="iv-panel">${barChart(ss.map(s => ({ label: monthLabel(s.month), value: Number(s.sales), tip: `${monthLabel(s.month, true)} · Sales ${moneyFull(s.sales, cur)}` })), { cur, empty: "No sales in this range." })}</div></section>
@@ -469,7 +479,7 @@ function monthSheet(entityId, month) {
           ${ds.map(d => { const v = avg ? Math.round((Number(d.amount) / avg - 1) * 100) : 0; return `<tr><td>${dayLbl(d)} <small class="faint">${fmtDate(d.day, { month: "short" })}</small></td><td class="r num">${moneyFull(d.amount, cur)}</td><td class="r num ${v < -25 ? "bad-text" : v > 25 ? "ok-text" : "faint"}">${v > 0 ? "+" : ""}${v}%</td></tr>`; }).join("")}
           <tr class="tot"><td>Total</td><td class="r num">${moneyFull(total, cur)}</td><td></td></tr></tbody></table></div>` :
         `<div class="sw-empty">No day-by-day figures for this month.${owner ? " Upload a daily sales Excel (Date, Amount) from the Sales tab." : ""}</div>`}
-      ${owner && m ? `<div class="sheet-foot"><button class="btn" data-act="inv-sale" data-id="${m.id}" data-entity="${entityId}">Edit month figures</button></div>` : ""}
+      ${owner && m && !e.sales_from ? `<div class="sheet-foot"><button class="btn" data-act="inv-sale" data-id="${m.id}" data-entity="${entityId}">Edit month figures</button></div>` : ""}
     </div>`;
   }, { wide: true });
 }
