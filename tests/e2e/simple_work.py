@@ -691,6 +691,11 @@ def handle2(route):
         r_["note"] = (b_.get("p_narration") or "").strip() or None
         if b_.get("p_amount") is not None: r_["amount"] = b_["p_amount"]; r_["edited_at"] = iso(dt.datetime.now(dt.timezone.utc)); r_["edit_reason"] = b_.get("p_reason")
         return route.fulfill(status=200, content_type="application/json", body="null")
+    if u.path == "/rest/v1/rpc/inv_add_cost":
+        b_ = json.loads(req.post_data); ins = [x for x in DB["inv_investors"] if x["id"] in b_["p_investors"]]; bid = str(uuid.uuid4())
+        w = sum(float(x["amount"]) for x in ins)
+        for x in ins: DB["inv_costs"].append({"id": str(uuid.uuid4()), "entity_id": b_["p_entity"], "investor_id": x["id"], "batch_id": bid, "spent_on": b_["p_spent_on"], "title": b_["p_title"], "category": b_["p_category"], "amount": round(b_["p_total"] / len(ins) if b_["p_split"] == "equal" else b_["p_total"] * float(x["amount"]) / w, 2), "total": b_["p_total"], "split": b_["p_split"], "note": b_.get("p_note"), "derived": False})
+        return route.fulfill(status=200, content_type="application/json", body=json.dumps(bid))
     if u.path == "/rest/v1/rpc/inv_member_list": return route.fulfill(status=200, content_type="application/json", body=json.dumps([{"user_id": ME, "role": "owner", "email": "jezz@example.com", "display_name": "Jezz"}]))
     return _orig_handle(route)
 def _fake(route, body):
@@ -834,7 +839,7 @@ with sync_playwright() as pw:
     # ---------- Investor Portal ----------
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
         DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = []
-        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales", "inv_return_adjustments", "inv_return_log"]: DB[t] = []
+        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales", "inv_return_adjustments", "inv_return_log", "inv_costs"]: DB[t] = []
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
         page.goto(BASE + "/#/investors"); page.wait_for_selector('[data-act="inv-new"]', timeout=10000)
@@ -901,6 +906,14 @@ with sync_playwright() as pw:
         page.fill("#invRetEdit [name=amt]", "1"); page.click("#invRetEdit .btn.primary"); page.wait_for_timeout(300)
         check(f"[{tag}] amount change blocked without reason", page.locator("#invRetEdit").count() == 1 and all(float(x["amount"]) != 1 for x in DB["inv_returns"]))
         shot(page, f"{tag}-9-inv-return-edit"); page.click('#sheet [data-act="close-sheet"]')
+        page.click('.viewtabs a[href$="/costs"]'); page.wait_for_selector('[data-act="inv-cost"]'); page.click('[data-act="inv-cost"]'); page.wait_for_selector("#invCost")
+        page.fill("#invCost [name=title]", "CA fee — P&L review and ITR"); page.fill("#invCost [name=total]", "30000"); page.wait_for_timeout(100)
+        prev = page.inner_text("#invCost .iv-retlines")
+        page.click("#invCost .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden", timeout=10000)
+        ct = page.inner_text("#view")
+        check(f"[{tag}] shared cost split equally 10,000 x3 and shown in hand", len(DB["inv_costs"]) == 3 and all(float(c["amount"]) == 10000 for c in DB["inv_costs"]) and "₹10,000" in prev and "CA fee" in ct and "In hand" in ct, ct[:400])
+        shot(page, f"{tag}-9b-inv-costs")
+        page.click('.viewtabs a[href$="/returns"]'); page.wait_for_selector('[data-act="inv-return"]')
         check(f"[{tag}] investor filter", "₹45,000" in page.inner_text(".iv-table") and "₹50,000" not in page.inner_text(".iv-table"))
         # document upload
         page.click('.viewtabs a[href$="/documents"]'); page.wait_for_selector('[data-act="inv-doc-new"]')
