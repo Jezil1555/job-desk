@@ -677,6 +677,20 @@ def handle2(route):
         r = _fake(route, body)
         e = DB["inv_entities"][-1]; DB.setdefault("inv_members", []).append({"entity_id": e["id"], "user_id": ME, "role": "owner"})
         return r
+    if u.path == "/rest/v1/rpc/inv_set_daily_sale":
+        b_ = json.loads(req.post_data); ds = DB["inv_daily_sales"]; m = b_["p_day"][:7]
+        ds[:] = [x for x in ds if not (x["entity_id"] == b_["p_entity"] and x["day"] == b_["p_day"])]
+        if b_["p_amount"] is not None: ds.append({"id": str(uuid.uuid4()), "entity_id": b_["p_entity"], "day": b_["p_day"], "amount": b_["p_amount"]})
+        tot = sum(float(x["amount"]) for x in ds if x["entity_id"] == b_["p_entity"] and x["day"][:7] == m)
+        row = next((x for x in DB["inv_sales"] if x["entity_id"] == b_["p_entity"] and x["month"][:7] == m), None)
+        if row: row["sales"] = tot
+        else: DB["inv_sales"].append({"id": str(uuid.uuid4()), "entity_id": b_["p_entity"], "month": m + "-01", "sales": tot, "expenses": None, "net_profit": None, "note": None})
+        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"month": m + "-01", "month_total": tot, "synced": True}))
+    if u.path == "/rest/v1/rpc/inv_edit_return":
+        b_ = json.loads(req.post_data); r_ = next(x for x in DB["inv_returns"] if x["id"] == b_["p_return"])
+        r_["note"] = (b_.get("p_narration") or "").strip() or None
+        if b_.get("p_amount") is not None: r_["amount"] = b_["p_amount"]; r_["edited_at"] = iso(dt.datetime.now(dt.timezone.utc)); r_["edit_reason"] = b_.get("p_reason")
+        return route.fulfill(status=200, content_type="application/json", body="null")
     if u.path == "/rest/v1/rpc/inv_member_list": return route.fulfill(status=200, content_type="application/json", body=json.dumps([{"user_id": ME, "role": "owner", "email": "jezz@example.com", "display_name": "Jezz"}]))
     return _orig_handle(route)
 def _fake(route, body):
@@ -820,7 +834,7 @@ with sync_playwright() as pw:
     # ---------- Investor Portal ----------
     for (w, h, tag) in [(1360, 900, "desk"), (390, 844, "phone")]:
         DB.clear(); DB.update(fresh_db()); DB["task_steps"] = []; DB["quick_todos"] = []
-        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales"]: DB[t] = []
+        for t in ["inv_entities", "inv_members", "inv_investors", "inv_returns", "inv_sales", "inv_documents", "inv_daily_sales", "inv_return_adjustments", "inv_return_log"]: DB[t] = []
         ctx, page = new_page(b, w, h)
         page.unroute(re.compile(r"https://.*\.supabase\.co/.*")); page.route(re.compile(r"https://.*\.supabase\.co/.*"), handle2)
         page.goto(BASE + "/#/investors"); page.wait_for_selector('[data-act="inv-new"]', timeout=10000)
@@ -863,7 +877,13 @@ with sync_playwright() as pw:
         mt = page.inner_text("#sheet")
         check(f"[{tag}] May 2026 day view: 31 days, total 26.29 L, best day 6 May", "31 days recorded" in mt and "₹26.29 L" in mt and "6 May 2026" in mt, mt[:300])
         shot(page, f"{tag}-8-inv-month")
+        page.click('#sheet [data-act="inv-day"][data-new]'); page.wait_for_selector("#invDay")
+        page.fill("#invDay [name=day]", "2026-05-31"); page.dispatch_event("#invDay [name=day]", "change")
+        check(f"[{tag}] existing day prefilled for change", page.locator("#invDayDel").is_visible())
+        page.fill("#invDay [name=amt]", "99999"); page.click("#invDay .btn.primary"); page.wait_for_selector("#invDay", state="detached", timeout=10000)
+        check(f"[{tag}] back on the month view with the new total", "₹26.37 L" in page.inner_text("#sheet"), page.inner_text("#sheet")[:200])
         page.click('#sheet [data-act="close-sheet"]')
+        check(f"[{tag}] daily sale changed via one-day form", any(x["day"] == "2026-05-31" and float(x["amount"]) == 99999 for x in DB["inv_daily_sales"]) and len(DB["inv_daily_sales"]) == 342)
         # returns per investor
         page.click('.viewtabs a[href$="/returns"]'); page.wait_for_selector('[data-act="inv-return"]')
         page.click('[data-act="inv-return"]'); page.wait_for_selector("#invRet")
@@ -872,7 +892,15 @@ with sync_playwright() as pw:
         page.click("#invRet .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden")
         rt = page.inner_text("#view")
         check(f"[{tag}] three return payments recorded", len(DB["inv_returns"]) == 3 and "₹1,45,000" in rt, rt[:300])
+        check(f"[{tag}] 10% TDS split out (14,500 tax, 1,30,500 received) + FY table", sum(float(x.get("tds") or 0) for x in DB["inv_returns"]) == 14500 and "₹14,500" in rt and "₹1,30,500" in rt and "TDS by financial year" in rt, rt[:500])
         page.select_option("#inv-ret-who", label="Nihan"); page.wait_for_timeout(200)
+        page.click('.iv-table tr[data-act="inv-return-edit"] >> nth=0'); page.wait_for_selector("#invRetEdit")
+        page.fill("#invRetEdit [name=narr]", "Bank transfer ref 4471"); page.click("#invRetEdit .btn.primary"); page.wait_for_selector("#sheetWrap", state="hidden", timeout=10000)
+        check(f"[{tag}] narration saved on a payment", "Bank transfer ref 4471" in page.inner_text(".iv-table"))
+        page.click('.iv-table tr[data-act="inv-return-edit"] >> nth=0'); page.wait_for_selector("#invRetEdit"); page.click("#invAmtBtn")
+        page.fill("#invRetEdit [name=amt]", "1"); page.click("#invRetEdit .btn.primary"); page.wait_for_timeout(300)
+        check(f"[{tag}] amount change blocked without reason", page.locator("#invRetEdit").count() == 1 and all(float(x["amount"]) != 1 for x in DB["inv_returns"]))
+        shot(page, f"{tag}-9-inv-return-edit"); page.click('#sheet [data-act="close-sheet"]')
         check(f"[{tag}] investor filter", "₹45,000" in page.inner_text(".iv-table") and "₹50,000" not in page.inner_text(".iv-table"))
         # document upload
         page.click('.viewtabs a[href$="/documents"]'); page.wait_for_selector('[data-act="inv-doc-new"]')

@@ -1215,3 +1215,6 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .wnote.qp-medium { background: #ffe7b3; border-color: #d98b00; }
 .wnote.qp-low { background: #e2ecfa; border-color: #4a7cc4; }
 :root[data-theme="dark"] .wnote.qp-critical { background: #4d211a; } :root[data-theme="dark"] .wnote.qp-medium { background: #46381a; } :root[data-theme="dark"] .wnote.qp-low { background: #1f2c40; }
+.iv-auth { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line-2); border-radius: 12px; }
+.iv-subh { font-size: .85rem; margin: 12px 0 6px; color: var(--ink-2); }
+.iv-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: .85rem; }

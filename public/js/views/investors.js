@@ -8,7 +8,8 @@ import { sb, run } from "../api.js";
 import { downloadXlsx } from "../xlsx.js";
 import { parseDate } from "./simpleio.js";
 
-export const inv = { loaded: false, loading: null, entities: [], members: [], investors: [], returns: [], sales: [], daily: [], docs: [], ui: {} };
+export const inv = { loaded: false, loading: null, entities: [], members: [], investors: [], returns: [], sales: [], daily: [], docs: [], adj: [], ui: {} };
+const TDS_FROM = "2026-10-01"; // Burgery started deducting 10% TDS on returns from October 2026
 const DOC_KIND = { pl: "P/L reports", ledger: "Payment ledgers", contract: "Partner contracts", itr: "ITR filings", other: "Other documents" };
 const DOC_ONE = { pl: "P/L report", ledger: "Payment ledger", contract: "Partner contract", itr: "ITR filing", other: "Other" };
 let rerenderPage = () => {};
@@ -25,12 +26,13 @@ export function loadInv(force = false) {
       sb.from("inv_returns").select("*").order("paid_on", { ascending: false }).limit(10000),
       sb.from("inv_sales").select("*").order("month").limit(10000),
       sb.from("inv_documents").select("*").order("created_at", { ascending: false }).limit(2000),
-      sb.from("inv_daily_sales").select("id, entity_id, day, amount").order("day").limit(50000)
+      sb.from("inv_daily_sales").select("id, entity_id, day, amount").order("day").limit(50000),
+      sb.from("inv_return_adjustments").select("entity_id, investor_id, period_key, amount, narration").limit(10000)
     ]);
     if (seq !== inv.seq) return; // a newer load started; drop these older results
     const err = q.find(r => r.error);
     if (err) { inv.error = err.error.message; inv.loading = null; rerenderPage(); return; }
-    [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs, inv.daily] = q.map(r => r.data || []);
+    [inv.entities, inv.members, inv.investors, inv.returns, inv.sales, inv.docs, inv.daily, inv.adj] = q.map(r => r.data || []);
     // linked entities (e.g. a sub-investor group) read the outlet's sales from their main entity
     const linked = inv.entities.filter(e => e.sales_from);
     const ls = await Promise.all(linked.map(e => sb.rpc("inv_linked_sales", { p_entity: e.id })));
@@ -92,16 +94,16 @@ export function parseAmount(v) {
 /* ---------------- figures ---------------- */
 function figures(id) {
   const e = entity(id), ins = investorsOf(id), rs = returnsOf(id), ss = salesOf(id);
-  const invested = sum(ins, x => x.amount), received = sum(rs, x => x.amount);
+  const invested = sum(ins, x => x.amount), received = sum(rs, x => x.amount), tds = sum(rs, x => x.tds || 0);
   const per = ins.map(x => {
-    const got = sum(rs.filter(r => r.investor_id === x.id), r => r.amount);
+    const mine = rs.filter(r => r.investor_id === x.id), got = sum(mine, r => r.amount), tds = sum(mine, r => r.tds || 0);
     const cap = Number(x.amount) > 0;
-    return { x, got, cap, equity: x.equity_pct === null || x.equity_pct === undefined ? null : Number(x.equity_pct), share: pct(x.amount, Number(e.project_cost) || invested), recovered: cap ? pct(got, Number(x.amount)) : null, pending: Math.max(0, Number(x.amount) - got) };
+    return { x, got, tds, net: got - tds, cap, equity: x.equity_pct === null || x.equity_pct === undefined ? null : Number(x.equity_pct), share: pct(x.amount, Number(e.project_cost) || invested), recovered: cap ? pct(got, Number(x.amount)) : null, pending: Math.max(0, Number(x.amount) - got) };
   });
   const salesTotal = sum(ss, x => x.sales), profitTotal = sum(ss.filter(x => x.net_profit != null), x => x.net_profit);
   const last = ss[ss.length - 1] || null, last6 = ss.slice(-6);
   const eqs = per.filter(p => p.equity !== null), equityTotal = Math.round(sum(eqs, p => p.equity) * 1000) / 1000;
-  return { e, ins, rs, ss, invested, hasEquity: eqs.length > 0, equityTotal, capitalCount: per.filter(p => p.cap).length, received, pending: sum(per.filter(p => p.cap), p => p.pending), recovered: pct(sum(per.filter(p => p.cap), p => p.got), invested), per, salesTotal, profitTotal, last, avg6: last6.length ? sum(last6, x => x.sales) / last6.length : 0, me: per.find(p => p.x.is_me) };
+  return { e, ins, rs, ss, invested, hasEquity: eqs.length > 0, equityTotal, capitalCount: per.filter(p => p.cap).length, received, tds, pending: sum(per.filter(p => p.cap), p => p.pending), recovered: pct(sum(per.filter(p => p.cap), p => p.got), invested), per, salesTotal, profitTotal, last, avg6: last6.length ? sum(last6, x => x.sales) / last6.length : 0, me: per.find(p => p.x.is_me) };
 }
 
 /* ---------------- chart (single series bars, hover tooltip) ---------------- */
@@ -189,7 +191,7 @@ function overviewTab(f, owner) {
     <div class="sw-kpis iv-kpis">
       ${tile("Total project cost", money(cost || f.invested, cur), unalloc)}
       ${tile("Total invested", money(f.invested, cur), `by ${f.capitalCount} investor${f.capitalCount === 1 ? "" : "s"}`)}
-      ${tile("Returns received", money(f.received, cur), `${f.recovered}% of capital back`, "ok")}
+      ${tile("Returns received", money(f.received, cur), f.tds ? `${f.recovered}% of capital back · TDS ${money(f.tds, cur)}` : `${f.recovered}% of capital back`, "ok")}
       ${tile("Pending to recover", money(f.pending, cur), "capital not yet returned", f.pending ? "warn" : "")}
       ${tile("Sales to date", money(f.salesTotal, cur), f.ss.length ? `${f.ss.length} month${f.ss.length === 1 ? "" : "s"}` : "no months added")}
       ${tile("Avg monthly sales", money(f.avg6, cur), "last 6 months")}
@@ -234,7 +236,7 @@ function salesTab(f, owner) {
   const best = ss.reduce((b, s) => !b || Number(s.sales) > Number(b.sales) ? s : b, null);
   return `<div class="iv-filters"><label class="field-inline">Show <select class="input sm" id="inv-sales-range">
       ${[["6m", "Last 6 months"], ["12m", "Last 12 months"], ["all", "All time"], ...years.map(y => [y, y])].map(([k, v]) => `<option value="${k}" ${k === r ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-      ${e.sales_from ? `<span class="iv-fbtns hint">Sales and P&L come from <b>${esc(e._source || "the main entity")}</b>${owner ? " — update them there" : ""}.</span>` : owner ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-sale" data-entity="${e.id}">${ICON.plus}Add month</button><button class="btn sm" data-act="inv-sales-import" data-entity="${e.id}">${ICON.download}Upload Excel</button></span>` : ""}</div>
+      ${e.sales_from ? `<span class="iv-fbtns hint">Sales and P&L come from <b>${esc(e._source || "the main entity")}</b>${owner ? " — update them there" : ""}.</span>` : owner ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-day" data-entity="${e.id}">${ICON.plus}Add daily sales</button><button class="btn sm" data-act="inv-sale" data-entity="${e.id}">${ICON.plus}Add month</button><button class="btn sm" data-act="inv-sales-import" data-entity="${e.id}">${ICON.download}Upload Excel</button></span>` : ""}</div>
     <div class="sw-kpis iv-kpis">${tile("Sales", money(tSales, cur), `${ss.length} month${ss.length === 1 ? "" : "s"}`)}${tile("Expenses", money(tExp, cur))}${tile("Net profit", money(tProfit, cur), tSales ? `${pct(tProfit, tSales)}% margin` : "", tProfit < 0 ? "bad" : "ok")}${tile("Best month", best ? money(best.sales, cur) : "—", best ? monthLabel(best.month, true) : "")}</div>
     <div class="iv-two">
       <section class="sw-sect"><h2>Sales trend</h2><div class="iv-panel">${barChart(ss.map(s => ({ label: monthLabel(s.month), value: Number(s.sales), tip: `${monthLabel(s.month, true)} · Sales ${moneyFull(s.sales, cur)}` })), { cur, empty: "No sales in this range." })}</div></section>
@@ -249,22 +251,41 @@ function salesTab(f, owner) {
 }
 
 /* --- returns --- */
+// Indian financial year (April–March) a payment falls in, e.g. "FY 2026-27"
+const fyOf = d => { const y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7)), s0 = m >= 4 ? y : y - 1; return `FY ${s0}-${String(s0 + 1).slice(2)}`; };
+function tdsRows(f) {
+  const g = {};
+  f.rs.forEach(r => { const k = fyOf(r.paid_on) + "|" + r.investor_id; const x = g[k] || (g[k] = { fy: fyOf(r.paid_on), inv: r.investor_id, gross: 0, tds: 0, n: 0 }); x.gross += Number(r.amount); x.tds += Number(r.tds || 0); x.n++; });
+  const order = new Map(f.ins.map((x, i) => [x.id, i]));
+  return Object.values(g).sort((a, b) => b.fy.localeCompare(a.fy) || (order.get(a.inv) ?? 99) - (order.get(b.inv) ?? 99));
+}
+function tdsSection(f) {
+  const cur = f.e.currency, rows = tdsRows(f), name = id => (f.ins.find(x => x.id === id) || {}).name || "—";
+  return `<section class="sw-sect"><h2>TDS by financial year</h2>
+    <p class="hint">Gross return, tax deducted at source and what reached the bank, per person, April–March — the figures to match against Form 26AS / AIS and Form 16A when filing ITR.</p>
+    <div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Year</th><th>Investor</th><th class="r">Gross return</th><th class="r">TDS (tax)</th><th class="r">Received</th></tr></thead><tbody>
+    ${rows.map(x => `<tr><td>${x.fy}</td><td>${esc(name(x.inv))}</td><td class="r num">${moneyFull(x.gross, cur)}</td><td class="r num">${x.tds ? moneyFull(x.tds, cur) : "—"}</td><td class="r num">${moneyFull(x.gross - x.tds, cur)}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+}
 function returnsTab(f, owner) {
   const { e } = f, cur = e.currency, who = inv.ui.retWho || "", yr = inv.ui.retYear || "";
   const years = [...new Set(f.rs.map(r => r.paid_on.slice(0, 4)))].sort().reverse();
   const rs = f.rs.filter(r => (!who || r.investor_id === who) && (!yr || r.paid_on.startsWith(yr)));
   const name = id => (f.ins.find(x => x.id === id) || {}).name || "—";
+  const anyTds = f.rs.some(r => Number(r.tds));
   return `<div class="iv-filters">
       <label class="field-inline">Investor <select class="input sm" id="inv-ret-who"><option value="">All investors</option>${f.ins.map(x => `<option value="${x.id}" ${x.id === who ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
       <label class="field-inline">Year <select class="input sm" id="inv-ret-year"><option value="">All years</option>${years.map(y => `<option ${y === yr ? "selected" : ""}>${y}</option>`).join("")}</select></label>
       ${e.sales_from ? `<span class="iv-fbtns hint">Returns here are worked out automatically from what's recorded in <b>${esc(e._source || "the main entity")}</b>, split by capital.</span>` : owner && f.ins.length ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-return" data-entity="${e.id}">${ICON.plus}Record returns</button><button class="btn sm" data-act="inv-doc-new" data-entity="${e.id}" data-kind="ledger">${ICON.download}Add payment ledger</button></span>` : ""}</div>
+    ${owner && rs.length ? `<p class="hint">Tap a payment to add a narration. Changing an amount or TDS needs a reason and your password, and is logged.</p>` : ""}
     ${!e.sales_from && owner && f.ins.some(x => x.pools_into) ? `<p class="hint">Returns for ${f.ins.filter(x => x.pools_into).map(x => esc(x.name)).join(" and ")} are also split automatically into ${esc((inv.entities.find(g => g.id === f.ins.find(x => x.pools_into).pools_into) || {}).name || "their group")}.</p>` : ""}
-    <div class="iv-per">${f.per.map(p => `<div class="iv-per-c ${who === p.x.id ? "on" : ""}"><b>${esc(p.x.name)}${p.equity !== null ? ` <small class="faint">· ${p.equity}% equity</small>` : ""}</b>${p.cap ? `<span>${money(p.got, cur)} <small>of ${money(p.x.amount, cur)}</small></span><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span><small>${p.recovered}% recovered · ${money(p.pending, cur)} pending</small>` : `<span>${money(p.got, cur)} <small>received</small></span><small>No capital invested</small>`}</div>`).join("")}</div>
+    <div class="iv-per">${f.per.map(p => `<div class="iv-per-c ${who === p.x.id ? "on" : ""}"><b>${esc(p.x.name)}${p.equity !== null ? ` <small class="faint">· ${p.equity}% equity</small>` : ""}</b>${p.cap ? `<span>${money(p.got, cur)} <small>of ${money(p.x.amount, cur)}</small></span><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span><small>${p.recovered}% recovered · ${money(p.pending, cur)} pending</small>${p.tds ? `<small>In hand ${money(p.net, cur)} · TDS ${money(p.tds, cur)}</small>` : ""}` : `<span>${money(p.got, cur)} <small>received</small></span><small>No capital invested</small>`}</div>`).join("")}</div>
     <section class="sw-sect"><h2>Payments received <span class="c">${rs.length}</span></h2>
-    ${rs.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Paid on</th><th>For month</th><th>Investor</th><th class="r">Amount</th><th>Note</th>${owner ? "<th></th>" : ""}</tr></thead><tbody>
-      ${rs.map(r => `<tr><td>${dmy(r.paid_on)}</td><td>${r.period ? monthLabel(r.period, true) : "—"}</td><td>${esc(name(r.investor_id))}</td><td class="r num">${moneyFull(r.amount, cur)}</td><td class="small">${esc(r.note || "")}</td>${owner ? `<td class="r">${r.derived ? "" : `<button class="iconbtn sm sw-del" data-act="inv-return-del" data-id="${r.id}" aria-label="Delete payment">${ICON.trash}</button>`}</td>` : ""}</tr>`).join("")}
-      <tr class="tot"><td colspan="3">Total</td><td class="r num">${moneyFull(sum(rs, r => r.amount), cur)}</td><td colspan="${owner ? 2 : 1}"></td></tr>
+    ${rs.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Paid on</th><th>For month</th><th>Investor</th><th class="r">Gross</th>${anyTds ? `<th class="r">TDS (tax)</th><th class="r">Received</th>` : ""}<th>Narration</th>${owner ? "<th></th>" : ""}</tr></thead><tbody>
+      ${rs.map(r => `<tr ${owner ? `class="click" data-act="inv-return-edit" data-id="${r.id}" title="Add narration or change amount"` : ""}><td>${dmy(r.paid_on)}</td><td>${r.period ? monthLabel(r.period, true) : "—"}</td><td>${esc(name(r.investor_id))}</td><td class="r num">${moneyFull(r.amount, cur)}${r.edited_at ? `<br><small class="chip warn" title="${esc(r.edit_reason || "")}">Edited${r.auto_amount != null ? ` · auto ${money(r.auto_amount, cur)}` : ""}</small>` : ""}</td>${anyTds ? `<td class="r num">${Number(r.tds) ? moneyFull(r.tds, cur) : "—"}</td><td class="r num">${moneyFull(r.amount - (r.tds || 0), cur)}</td>` : ""}<td class="small">${esc(r.note || "")}${r.edited_at && r.edit_reason ? `<br><small class="faint">Change: ${esc(r.edit_reason)}</small>` : ""}</td>${owner ? `<td class="r">${r.derived ? "" : `<button class="iconbtn sm sw-del" data-act="inv-return-del" data-id="${r.id}" aria-label="Delete payment">${ICON.trash}</button>`}</td>` : ""}</tr>`).join("")}
+      <tr class="tot"><td colspan="3">Total</td><td class="r num">${moneyFull(sum(rs, r => r.amount), cur)}</td>${anyTds ? `<td class="r num">${moneyFull(sum(rs, r => r.tds || 0), cur)}</td><td class="r num">${moneyFull(sum(rs, r => r.amount - (r.tds || 0)), cur)}</td>` : ""}<td colspan="${owner ? 2 : 1}"></td></tr>
     </tbody></table></div>` : `<div class="sw-empty">${f.ins.length ? "No returns recorded yet." : "Add investors first (Settings), then record returns."}</div>`}</section>
+    ${anyTds ? tdsSection(f) : ""}
     ${docsOf(e.id).some(d => d.kind === "ledger") ? `<section class="sw-sect"><h2>Payment ledgers</h2><div class="iv-docs">${docsOf(e.id).filter(d => d.kind === "ledger").map(docRow).join("")}</div></section>` : ""}`;
 }
 
@@ -416,17 +437,24 @@ function returnForm(entityId) {
     sh.innerHTML = sheetHead("Record returns", esc(e.name)) + `<form class="sh-body" id="invRet">
       <div class="grid2"><label class="field"><span>Paid on</span><input class="input" type="date" name="paid" value="${today}" max="${today}" required></label>
       <label class="field"><span>For month (optional)</span><input class="input" type="month" name="period" value="${today.slice(0, 7)}"></label></div>
-      <p class="hint">Enter what each investor received. Leave blank for anyone who didn't get a payment.</p>
-      <div class="iv-retlines">${ins.map(x => `<label class="iv-retline"><span>${esc(x.name)}${x.is_me ? ` <span class="chip">Me</span>` : ""}</span><input class="input" name="amt-${x.id}" inputmode="decimal" placeholder="${e.currency} amount"></label>`).join("")}</div>
+      <label class="field"><span>TDS deducted (%)</span><input class="input" name="tdspct" inputmode="decimal" value="${today >= TDS_FROM ? 10 : 0}"></label>
+      <p class="hint">Enter each investor's <b>gross</b> return (before tax). The TDS and the amount actually received are worked out below. Leave blank for anyone who didn't get a payment.</p>
+      <div class="iv-retlines">${ins.map(x => `<label class="iv-retline"><span>${esc(x.name)}${x.is_me ? ` <span class="chip">Me</span>` : ""}<small class="faint iv-tdsline" data-for="${x.id}"></small></span><input class="input" name="amt-${x.id}" inputmode="decimal" placeholder="${e.currency} gross"></label>`).join("")}</div>
       <label class="field"><span>Note (optional)</span><input class="input" name="note" maxlength="1000" placeholder="e.g. October profit share, bank transfer"></label>
       <div class="sheet-foot"><button class="btn primary block">Save</button></div></form>`;
+    const fm0 = sh.querySelector("#invRet");
+    const pctOf = () => { const v = parseAmount(fm0.tdspct.value); return v === undefined || v === null ? 0 : v; };
+    const live = () => { const p = pctOf(); ins.forEach(x => { const a = parseAmount(fm0["amt-" + x.id].value), el = fm0.querySelector(`.iv-tdsline[data-for="${x.id}"]`); el.textContent = a && p ? ` · TDS ${moneyFull(Math.round(a * p) / 100, e.currency)} · received ${moneyFull(a - Math.round(a * p) / 100, e.currency)}` : ""; }); };
+    fm0.addEventListener("input", live);
+    fm0.paid.addEventListener("change", () => { if (fm0.paid.value >= TDS_FROM && !parseAmount(fm0.tdspct.value)) fm0.tdspct.value = 10; live(); });
     sh.querySelector("#invRet").onsubmit = async ev => {
       ev.preventDefault(); ev.stopPropagation();
-      const fm = ev.target, rows = [];
+      const fm = ev.target, rows = [], p = pctOf();
+      if (p < 0 || p > 100) return toastError("TDS % must be between 0 and 100.");
       for (const x of ins) {
         const a = parseAmount(fm["amt-" + x.id].value);
         if (a === undefined) return toastError(`${x.name}: amount isn't a number`);
-        if (a) rows.push({ entity_id: entityId, investor_id: x.id, paid_on: fm.paid.value, period: fm.period.value ? fm.period.value + "-01" : null, amount: a, note: fm.note.value.trim() || null });
+        if (a) rows.push({ entity_id: entityId, investor_id: x.id, paid_on: fm.paid.value, period: fm.period.value ? fm.period.value + "-01" : null, amount: a, tds: Math.round(a * p) / 100, note: fm.note.value.trim() || null });
       }
       if (!rows.length) return toastError("Enter at least one amount.");
       const b = fm.querySelector(".primary"); busy(b);
@@ -462,8 +490,94 @@ function docForm(entityId, kind = "pl") {
 
 /* ---------------- one month, day by day ---------------- */
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function dayForm(entityId, day, isNew) {
+  const e = entity(entityId), today = todayISO(state.tz), find = d => inv.daily.find(x => x.entity_id === entityId && x.day === d);
+  const d0 = day || today;
+  openSheet(sh => {
+    const cur0 = find(d0);
+    sh.innerHTML = sheetHead(cur0 ? "Change daily sales" : "Add daily sales", esc(e.name)) + `<form class="sh-body" id="invDay">
+      <div class="grid2"><label class="field"><span>Date</span><input class="input" type="date" name="day" value="${d0}" max="${today}" required></label>
+      <label class="field"><span>Sales for the day</span><input class="input" name="amt" value="${cur0 ? cur0.amount : ""}" inputmode="decimal" required placeholder="e.g. 42500"></label></div>
+      <p class="hint" id="invDayHint">${cur0 ? `This day already has ${moneyFull(cur0.amount, e.currency)} — saving replaces it.` : `The month's total sales update by themselves.`}</p>
+      <div class="sheet-foot"><button type="button" class="btn danger" id="invDayDel" ${cur0 ? "" : "hidden"}>${ICON.trash}Remove day</button><button class="btn primary block">Save</button></div></form>`;
+    const fm = sh.querySelector("#invDay"), hint = sh.querySelector("#invDayHint"), del = sh.querySelector("#invDayDel");
+    fm.day.onchange = () => { const c = find(fm.day.value); del.hidden = !c; hint.textContent = c ? `This day already has ${moneyFull(c.amount, e.currency)} — saving replaces it.` : "The month's total sales update by themselves."; if (c) fm.amt.value = c.amount; };
+    const save = async (amount, btn) => {
+      busy(btn);
+      const r = await run(sb.rpc("inv_set_daily_sale", { p_entity: entityId, p_day: fm.day.value, p_amount: amount }));
+      busy(btn, false); if (r.error) return toastError(r.error);
+      await loadInv(true); closeSheet();
+      toast(r.data && r.data.synced ? `Saved · ${monthLabel(r.data.month, true)} total ${moneyFull(r.data.month_total, e.currency)}` : "Saved. This month's typed-in total was kept — edit the month if it needs updating.");
+    };
+    fm.onsubmit = ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const a = parseAmount(fm.amt.value);
+      if (a === undefined || a === null || a < 0) return toastError("Enter the day's sales as a number, e.g. 42500 or 0.42 L.");
+      save(a, fm.querySelector(".primary"));
+    };
+    del.onclick = async () => {
+      if (!await dialog({ title: `Remove ${dmy(fm.day.value)}?`, text: "The day's sales are removed and the month total goes down by the same amount.", confirm: "Remove", danger: true })) return;
+      save(null, del);
+    };
+  });
+}
+
+function returnEditForm(id) {
+  const r = inv.returns.find(x => x.id === id); if (!r) return;
+  const e = entity(r.entity_id), cur = e.currency, inv0 = inv.investors.find(x => x.id === r.investor_id) || {};
+  const key = r.period || r.paid_on, adj = inv.adj.find(a => a.investor_id === r.investor_id && a.period_key === key);
+  const narr = r.derived ? (adj && adj.narration) || "" : r.note || "";
+  openSheet(sh => {
+    sh.innerHTML = sheetHead("Payment", `${esc(inv0.name || "")} · ${esc(e.name)}`) + `<form class="sh-body" id="invRetEdit">
+      <div class="sw-kpis iv-kpis">${tile("Gross", moneyFull(r.amount, cur), r.derived && r.auto_amount != null && Number(r.auto_amount) !== Number(r.amount) ? `auto split ${moneyFull(r.auto_amount, cur)}` : r.derived ? "auto split" : "")}${tile("TDS (tax)", Number(r.tds) ? moneyFull(r.tds, cur) : "—", Number(r.tds) ? `received ${moneyFull(r.amount - r.tds, cur)}` : "")}${tile("Paid on", dmy(r.paid_on))}${tile("For month", r.period ? monthLabel(r.period, true) : "—")}</div>
+      <label class="field"><span>Narration</span><textarea class="input" name="narr" rows="2" maxlength="1000" placeholder="e.g. Paid via bank transfer, ref 4471">${esc(narr)}</textarea></label>
+      ${r.derived ? `<p class="hint">Leave empty to show the automatic note (${esc(r.note || "")}).</p>` : ""}
+      <div id="invAmtBox" hidden class="iv-panel iv-auth">
+        <div class="grid2"><label class="field"><span>Gross amount (${cur})</span><input class="input" name="amt" inputmode="decimal" value="${r.amount}"></label>
+        <label class="field"><span>TDS deducted (${cur})</span><input class="input" name="tds" inputmode="decimal" value="${r.tds || 0}"></label></div>
+        ${r.derived && r.auto_amount != null && Number(r.auto_amount) !== Number(r.amount) ? `<button type="button" class="linkbtn" id="invAmtReset">Go back to the automatic split (${moneyFull(r.auto_amount, cur)})</button>` : ""}
+        <label class="field"><span>Reason for the change</span><input class="input" name="reason" maxlength="500" placeholder="e.g. ₹1,000 adjusted against advance"></label>
+        <label class="field"><span>Your J. Desk password (to authorise)</span><input class="input" type="password" name="pw" autocomplete="current-password"></label>
+        <p class="hint">Changes are logged with your name, the time and the reason.</p>
+      </div>
+      <div id="invRetLog"></div>
+      <div class="sheet-foot"><button type="button" class="btn" id="invAmtBtn">Change amount / TDS</button><button class="btn primary block">Save</button></div></form>`;
+    const fm = sh.querySelector("#invRetEdit"), box = sh.querySelector("#invAmtBox"), ab = sh.querySelector("#invAmtBtn");
+    ab.onclick = () => { box.hidden = false; ab.hidden = true; fm.amt.focus(); };
+    const rs = sh.querySelector("#invAmtReset"); if (rs) rs.onclick = () => { fm.amt.value = r.auto_amount; };
+    sb.from("inv_return_log").select("field, old_value, new_value, reason, changed_at").eq("entity_id", r.entity_id).eq("investor_id", r.investor_id).eq("period_key", key).order("changed_at", { ascending: false }).limit(10).then(q => {
+      const el = sh.querySelector("#invRetLog"); if (!el || !q.data || !q.data.length) return;
+      el.innerHTML = `<h3 class="iv-subh">Change history</h3><ul class="iv-log">${q.data.map(l => `<li><small class="faint">${ago(l.changed_at)}</small> ${l.field === "tds" ? `TDS ${moneyFull(l.old_value, cur)} → <b>${moneyFull(l.new_value, cur)}</b>${l.reason ? ` · ${esc(l.reason)}` : ""}` : l.field === "amount" ? `Amount ${moneyFull(l.old_value, cur)} → <b>${moneyFull(l.new_value, cur)}</b>${l.reason ? ` · ${esc(l.reason)}` : ""}` : `Narration ${l.new_value ? `set to “${esc(l.new_value)}”` : "cleared"}`}</li>`).join("")}</ul>`;
+    });
+    fm.onsubmit = async ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      let amount = null, reason = null, tds = null;
+      if (!box.hidden) {
+        const a = parseAmount(fm.amt.value), t = parseAmount(fm.tds.value) ?? 0;
+        if (a === undefined || a === null || a < 0) return toastError("Gross amount isn't a number.");
+        if (t === undefined || t < 0 || t > a) return toastError("TDS must be a number between 0 and the gross amount.");
+        if (Number(t) !== Number(r.tds || 0)) tds = t;
+        if (Number(a) !== Number(r.amount)) amount = a;
+        if (amount !== null || tds !== null) {
+          reason = fm.reason.value.trim();
+          if (reason.length < 3) return toastError("Give a reason for changing the amount.");
+          if (!fm.pw.value) return toastError("Enter your password to authorise the change.");
+        }
+      }
+      const b = fm.querySelector(".primary"); busy(b);
+      if (amount !== null || tds !== null) {
+        const au = await sb.auth.signInWithPassword({ email: state.user.email, password: fm.pw.value });
+        if (au.error) { busy(b, false); fm.pw.value = ""; return toastError("Password didn't match. Nothing was changed."); }
+      }
+      const q = await run(sb.rpc("inv_edit_return", { p_return: r.id, p_narration: fm.narr.value, p_amount: amount, p_reason: reason, p_tds: tds }));
+      busy(b, false); if (q.error) return toastError(q.error);
+      await loadInv(true); closeSheet(); toast(amount !== null || tds !== null ? "Change saved and logged" : "Saved");
+    };
+  });
+}
+
 function monthSheet(entityId, month) {
-  const e = entity(entityId), cur = e.currency, owner = isOwner(entityId);
+  const e = entity(entityId), cur = e.currency, owner = canEdit(entityId) && !e.sales_from;
   openSheet(sh => {
     const m = inv.sales.find(x => x.entity_id === entityId && x.month === month);
     const ds = daysOf(entityId, month);
@@ -480,10 +594,10 @@ function monthSheet(entityId, month) {
       ${ds.length ? `<div class="iv-panel">${barChart(ds.map(d => ({ label: String(Number(d.day.slice(8))), value: Number(d.amount), tip: `${WD[new Date(d.day + "T12:00:00Z").getUTCDay()]} ${dmy(d.day)} · ${moneyFull(d.amount, cur)}` })), { cur, slot: 22 })}</div>
         ${topWd ? `<p class="hint">Strongest weekday this month: <b>${topWd.n}</b> (avg ${money(topWd.avg, cur)}). ${byWd.map(w => `${w.n} ${money(w.avg, cur)}`).join(" · ")}</p>` : ""}
         <div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Day</th><th class="r">Sales</th><th class="r">vs daily avg</th></tr></thead><tbody>
-          ${ds.map(d => { const v = avg ? Math.round((Number(d.amount) / avg - 1) * 100) : 0; return `<tr><td>${dayLbl(d)} <small class="faint">${fmtDate(d.day, { month: "short" })}</small></td><td class="r num">${moneyFull(d.amount, cur)}</td><td class="r num ${v < -25 ? "bad-text" : v > 25 ? "ok-text" : "faint"}">${v > 0 ? "+" : ""}${v}%</td></tr>`; }).join("")}
+          ${ds.map(d => { const v = avg ? Math.round((Number(d.amount) / avg - 1) * 100) : 0; return `<tr ${owner ? `class="click" data-act="inv-day" data-entity="${entityId}" data-day="${d.day}" title="Change or remove"` : ""}><td>${dayLbl(d)} <small class="faint">${fmtDate(d.day, { month: "short" })}</small></td><td class="r num">${moneyFull(d.amount, cur)}</td><td class="r num ${v < -25 ? "bad-text" : v > 25 ? "ok-text" : "faint"}">${v > 0 ? "+" : ""}${v}%</td></tr>`; }).join("")}
           <tr class="tot"><td>Total</td><td class="r num">${moneyFull(total, cur)}</td><td></td></tr></tbody></table></div>` :
-        `<div class="sw-empty">No day-by-day figures for this month.${owner ? " Upload a daily sales Excel (Date, Amount) from the Sales tab." : ""}</div>`}
-      ${owner && m && !e.sales_from ? `<div class="sheet-foot"><button class="btn" data-act="inv-sale" data-id="${m.id}" data-entity="${entityId}">Edit month figures</button></div>` : ""}
+        `<div class="sw-empty">No day-by-day figures for this month.${owner ? " Add a day below, or upload a daily sales Excel (Date, Amount) from the Sales tab." : ""}</div>`}
+      ${owner ? `<div class="sheet-foot">${m ? `<button class="btn" data-act="inv-sale" data-id="${m.id}" data-entity="${entityId}">Edit month figures</button>` : ""}<button class="btn primary" data-act="inv-day" data-entity="${entityId}" data-day="${(() => { const t = todayISO(state.tz); return t.slice(0, 7) === month.slice(0, 7) ? t : month.slice(0, 7) + "-01"; })()}" data-new="1">${ICON.plus}Add a day</button></div>` : ""}
     </div>`;
   }, { wide: true });
 }
@@ -563,14 +677,16 @@ function exportEntity(id) {
   const name = x => (f.ins.find(i => i.id === x) || {}).name || "";
   downloadXlsx(`${e.name.replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-")}-investor-report-${todayISO(state.tz)}.xlsx`, [
     { name: "Summary", columns: [{ label: "Item", width: 32 }, { label: `Amount (${cur})`, money: true, width: 20 }, { label: "Note", width: 40 }], rows: [
-      ["Total project cost", Number(e.project_cost) || 0, ""], ["Total invested", f.invested, `${f.ins.length} investors`], ["Returns received", f.received, `${f.recovered}% of capital`],
+      ["Total project cost", Number(e.project_cost) || 0, ""], ["Total invested", f.invested, `${f.ins.length} investors`], ["Returns received (gross)", f.received, `${f.recovered}% of capital`], ["TDS deducted", f.tds, ""], ["Returns received in hand", f.received - f.tds, ""],
       ["Pending to recover", f.pending, ""], ["Sales to date", f.salesTotal, `${f.ss.length} months`], ["Net profit to date", f.profitTotal, ""], ["Average monthly sales (last 6)", Math.round(f.avg6), ""]] },
     { name: "Investors", columns: ["Partner", "Capital", "Capital share %", "Equity %", "Returns received", "Recovered %", "Pending", "Invested on", "Note"].map((label, i) => ({ label, money: [1, 4, 6].includes(i) })),
       rows: f.per.map(p => [p.x.name, Number(p.x.amount), p.cap ? p.share : null, p.equity, p.got, p.recovered, p.cap ? p.pending : null, p.x.invested_on ? dmy(p.x.invested_on) : "", p.x.note || ""]) },
     { name: "Sales", columns: ["Month", "Sales", "Expenses", "Net profit", "Margin %", "Note"].map((label, i) => ({ label, money: i >= 1 && i <= 3 })),
       rows: f.ss.map(s => [monthLabel(s.month, true), Number(s.sales), s.expenses == null ? null : Number(s.expenses), s.net_profit == null ? null : Number(s.net_profit), s.net_profit == null || !Number(s.sales) ? null : pct(s.net_profit, s.sales), s.note || ""]) },
-    { name: "Returns", columns: ["Paid on", "For month", "Investor", "Amount", "Note"].map((label, i) => ({ label, money: i === 3 })),
-      rows: f.rs.slice().sort((a, b) => a.paid_on.localeCompare(b.paid_on)).map(r => [dmy(r.paid_on), r.period ? monthLabel(r.period, true) : "", name(r.investor_id), Number(r.amount), r.note || ""]) },
+    { name: "Returns", columns: ["Paid on", "For month", "Financial year", "Investor", "Gross", "TDS", "Received", "Narration"].map((label, i) => ({ label, money: i >= 4 && i <= 6 })),
+      rows: f.rs.slice().sort((a, b) => a.paid_on.localeCompare(b.paid_on)).map(r => [dmy(r.paid_on), r.period ? monthLabel(r.period, true) : "", fyOf(r.paid_on), name(r.investor_id), Number(r.amount), Number(r.tds || 0), Number(r.amount) - Number(r.tds || 0), r.note || ""]) },
+    { name: "TDS by year", columns: ["Financial year", "Investor", "Gross return", "TDS", "Received", "Payments"].map((label, i) => ({ label, money: i >= 2 && i <= 4 })),
+      rows: tdsRows(f).map(x => [x.fy, name(x.inv), x.gross, x.tds, x.gross - x.tds, x.n]) },
     { name: "Daily sales", columns: [{ label: "Date" }, { label: "Day" }, { label: "Sales", money: true }], rows: daysOf(id).map(d => [dmy(d.day), WD[new Date(d.day + "T12:00:00Z").getUTCDay()], Number(d.amount)]) },
     { name: "Documents", columns: ["Type", "Title", "For month", "Added"].map(label => ({ label })), rows: docsOf(id).map(d => [DOC_ONE[d.kind], d.title, d.period ? monthLabel(d.period, true) : "", dmy(d.created_at.slice(0, 10))]) }
   ]);
@@ -587,6 +703,8 @@ export async function handleInvClick(act, el) {
     case "inv-investor": investorForm(ent, id); break;
     case "inv-sale": saleForm(ent, id); break;
     case "inv-return": returnForm(ent); break;
+    case "inv-return-edit": returnEditForm(id); break;
+    case "inv-day": dayForm(ent, el.dataset.day, !!el.dataset.new); break;
     case "inv-return-del": {
       const r0 = inv.returns.find(r => r.id === id); if (!r0) break;
       if (!await dialog({ title: "Delete this payment?", text: `${moneyFull(r0.amount, entity(r0.entity_id).currency)} paid on ${dmy(r0.paid_on)}. This can't be undone.`, confirm: "Delete", danger: true })) break;

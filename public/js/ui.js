@@ -116,7 +116,7 @@ export const toastError = msg => toast(msg, { type: "error" });
 /* ---------- sheets (side panel on desktop, bottom sheet on phones) ---------- */
 const stack = [];
 export function openSheet(render, { wide = false, onClose } = {}) {
-  stack.push({ render, onClose });
+  stack.push({ render, onClose, wide });
   const wrap = $("sheetWrap"), sh = $("sheet");
   sh.classList.toggle("wide", wide);
   wrap.hidden = false; document.body.classList.add("noscroll");
@@ -127,7 +127,7 @@ export function rerenderSheet() { const top = stack[stack.length - 1]; if (top) 
 export function closeSheet() {
   const top = stack.pop();
   if (top && top.onClose) top.onClose();
-  if (stack.length) { stack[stack.length - 1].render($("sheet")); return; }
+  if (stack.length) { const t = stack[stack.length - 1]; $("sheet").classList.toggle("wide", !!t.wide); t.render($("sheet")); return; }
   $("sheetWrap").hidden = true; document.body.classList.remove("noscroll"); $("sheet").innerHTML = "";
 }
 export function closeAllSheets() { while (stack.length) closeSheet(); }
