@@ -40,6 +40,7 @@ export function loadInv(force = false) {
       e._source = d.source_name;
       inv.sales = inv.sales.filter(x => x.entity_id !== e.id).concat((d.sales || []).map(x => ({ ...x, entity_id: e.id, _linked: true })));
       inv.daily = inv.daily.filter(x => x.entity_id !== e.id).concat((d.daily || []).map(x => ({ ...x, entity_id: e.id })));
+      inv.docs = inv.docs.filter(x => !(x.entity_id === e.id && x._linked)).concat((d.docs || []).map(x => ({ ...x, entity_id: e.id, _linked: true, _src: d.source_name })));
     });
     inv.loaded = true; inv.error = null; inv.loading = null; rerenderPage();
   })();
@@ -47,6 +48,8 @@ export function loadInv(force = false) {
 }
 const entity = id => inv.entities.find(e => e.id === id);
 const isOwner = id => inv.members.some(m => m.entity_id === id && m.user_id === state.user.id && m.role === "owner");
+const canEdit = id => inv.members.some(m => m.entity_id === id && m.user_id === state.user.id && (m.role === "owner" || m.role === "editor"));
+const ROLE = { owner: "Owner", editor: "Can edit", viewer: "View only" };
 const investorsOf = id => inv.investors.filter(x => x.entity_id === id);
 const returnsOf = id => inv.returns.filter(x => x.entity_id === id);
 const salesOf = id => inv.sales.filter(x => x.entity_id === id).sort((a, b) => a.month.localeCompare(b.month));
@@ -144,14 +147,14 @@ export function renderInvestors(view, id, tab, rerender) {
   if (!id) return renderList(view);
   const e = entity(id);
   if (!e) { view.innerHTML = emptyState("Entity not found", "It may have been deleted, or it isn't shared with you.", `<a class="btn" href="#/investors">All entities</a>`); return; }
-  const owner = isOwner(id), f = figures(id);
-  const tabs = { overview: "Overview", sales: "Sales", returns: "Returns", documents: `Documents · ${docsOf(id).length}`, settings: owner ? "Settings" : "Details" };
+  const owner = canEdit(id), admin = isOwner(id), f = figures(id);
+  const tabs = { overview: "Overview", sales: "Sales", returns: "Returns", documents: `Documents · ${docsOf(id).length}`, settings: admin ? "Settings" : "Details" };
   const t = tabs[tab] ? tab : "overview";
-  const body = t === "sales" ? salesTab(f, owner) : t === "returns" ? returnsTab(f, owner) : t === "documents" ? docsTab(f, owner) : t === "settings" ? settingsTab(f, owner) : overviewTab(f, owner);
+  const body = t === "sales" ? salesTab(f, owner) : t === "returns" ? returnsTab(f, owner) : t === "documents" ? docsTab(f, owner) : t === "settings" ? settingsTab(f, admin) : overviewTab(f, owner);
   view.innerHTML = `<div class="sw iv">
     <div class="sw-head"><div><p class="crumb"><a href="#/investors">Investor Portal</a></p><h1>${esc(e.name)}</h1>
-      <p class="sub">${e.description ? esc(e.description) + " · " : ""}${e.currency}${e.start_date ? ` · since ${dmy(e.start_date)}` : ""}${owner ? "" : " · shared with you (view only)"}</p></div>
-      <div class="sw-actions"><button class="btn" data-act="inv-export" data-id="${id}">${ICON.download}Download Excel</button>${owner ? `<button class="btn" data-act="inv-tab" data-id="${id}" data-tab="settings">${ICON.people}Share</button>` : ""}</div></div>
+      <p class="sub">${e.description ? esc(e.description) + " · " : ""}${e.currency}${e.start_date ? ` · since ${dmy(e.start_date)}` : ""}${admin ? "" : owner ? " · shared with you (can edit)" : " · shared with you (view only)"}</p></div>
+      <div class="sw-actions"><button class="btn" data-act="inv-export" data-id="${id}">${ICON.download}Download Excel</button>${admin ? `<button class="btn" data-act="inv-tab" data-id="${id}" data-tab="settings">${ICON.people}Share</button>` : ""}</div></div>
     <div class="viewtabs">${Object.entries(tabs).map(([k, v]) => `<a href="#/investors/${id}/${k}" class="${k === t ? "on" : ""}">${v}</a>`).join("")}</div>
     ${body}
   </div>`;
@@ -165,7 +168,7 @@ function renderList(view) {
     ${list.length ? `<div class="iv-grid">${list.map(e => {
       const f = figures(e.id);
       return `<a class="iv-card" href="#/investors/${e.id}">
-        <div class="iv-card-h"><h3>${esc(e.name)}</h3>${isOwner(e.id) ? "" : `<span class="chip">Shared</span>`}</div>
+        <div class="iv-card-h"><h3>${esc(e.name)}</h3>${isOwner(e.id) ? "" : `<span class="chip">Shared</span>`}${e.sales_from ? `<span class="chip">Group</span>` : ""}</div>
         <div class="iv-card-n"><span><small>Project cost</small><b>${money(e.project_cost || f.invested, e.currency)}</b></span><span><small>Returns received</small><b>${money(f.received, e.currency)}</b></span><span><small>Sales to date</small><b>${money(f.salesTotal, e.currency)}</b></span></div>
         <div class="iv-rec"><span class="sw-bar"><i style="width:${Math.min(100, f.recovered)}%"></i></span><small>${f.recovered}% of capital recovered · ${money(f.pending, e.currency)} pending</small></div>
       </a>`;
@@ -254,11 +257,12 @@ function returnsTab(f, owner) {
   return `<div class="iv-filters">
       <label class="field-inline">Investor <select class="input sm" id="inv-ret-who"><option value="">All investors</option>${f.ins.map(x => `<option value="${x.id}" ${x.id === who ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
       <label class="field-inline">Year <select class="input sm" id="inv-ret-year"><option value="">All years</option>${years.map(y => `<option ${y === yr ? "selected" : ""}>${y}</option>`).join("")}</select></label>
-      ${owner && f.ins.length ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-return" data-entity="${e.id}">${ICON.plus}Record returns</button><button class="btn sm" data-act="inv-doc-new" data-entity="${e.id}" data-kind="ledger">${ICON.download}Add payment ledger</button></span>` : ""}</div>
+      ${e.sales_from ? `<span class="iv-fbtns hint">Returns here are worked out automatically from what's recorded in <b>${esc(e._source || "the main entity")}</b>, split by capital.</span>` : owner && f.ins.length ? `<span class="iv-fbtns"><button class="btn sm primary" data-act="inv-return" data-entity="${e.id}">${ICON.plus}Record returns</button><button class="btn sm" data-act="inv-doc-new" data-entity="${e.id}" data-kind="ledger">${ICON.download}Add payment ledger</button></span>` : ""}</div>
+    ${!e.sales_from && owner && f.ins.some(x => x.pools_into) ? `<p class="hint">Returns for ${f.ins.filter(x => x.pools_into).map(x => esc(x.name)).join(" and ")} are also split automatically into ${esc((inv.entities.find(g => g.id === f.ins.find(x => x.pools_into).pools_into) || {}).name || "their group")}.</p>` : ""}
     <div class="iv-per">${f.per.map(p => `<div class="iv-per-c ${who === p.x.id ? "on" : ""}"><b>${esc(p.x.name)}${p.equity !== null ? ` <small class="faint">· ${p.equity}% equity</small>` : ""}</b>${p.cap ? `<span>${money(p.got, cur)} <small>of ${money(p.x.amount, cur)}</small></span><span class="sw-bar"><i style="width:${Math.min(100, p.recovered)}%"></i></span><small>${p.recovered}% recovered · ${money(p.pending, cur)} pending</small>` : `<span>${money(p.got, cur)} <small>received</small></span><small>No capital invested</small>`}</div>`).join("")}</div>
     <section class="sw-sect"><h2>Payments received <span class="c">${rs.length}</span></h2>
     ${rs.length ? `<div class="iv-table-wrap"><table class="iv-table"><thead><tr><th>Paid on</th><th>For month</th><th>Investor</th><th class="r">Amount</th><th>Note</th>${owner ? "<th></th>" : ""}</tr></thead><tbody>
-      ${rs.map(r => `<tr><td>${dmy(r.paid_on)}</td><td>${r.period ? monthLabel(r.period, true) : "—"}</td><td>${esc(name(r.investor_id))}</td><td class="r num">${moneyFull(r.amount, cur)}</td><td class="small">${esc(r.note || "")}</td>${owner ? `<td class="r"><button class="iconbtn sm sw-del" data-act="inv-return-del" data-id="${r.id}" aria-label="Delete payment">${ICON.trash}</button></td>` : ""}</tr>`).join("")}
+      ${rs.map(r => `<tr><td>${dmy(r.paid_on)}</td><td>${r.period ? monthLabel(r.period, true) : "—"}</td><td>${esc(name(r.investor_id))}</td><td class="r num">${moneyFull(r.amount, cur)}</td><td class="small">${esc(r.note || "")}</td>${owner ? `<td class="r">${r.derived ? "" : `<button class="iconbtn sm sw-del" data-act="inv-return-del" data-id="${r.id}" aria-label="Delete payment">${ICON.trash}</button>`}</td>` : ""}</tr>`).join("")}
       <tr class="tot"><td colspan="3">Total</td><td class="r num">${moneyFull(sum(rs, r => r.amount), cur)}</td><td colspan="${owner ? 2 : 1}"></td></tr>
     </tbody></table></div>` : `<div class="sw-empty">${f.ins.length ? "No returns recorded yet." : "Add investors first (Settings), then record returns."}</div>`}</section>
     ${docsOf(e.id).some(d => d.kind === "ledger") ? `<section class="sw-sect"><h2>Payment ledgers</h2><div class="iv-docs">${docsOf(e.id).filter(d => d.kind === "ledger").map(docRow).join("")}</div></section>` : ""}`;
@@ -266,8 +270,8 @@ function returnsTab(f, owner) {
 
 /* --- documents --- */
 function docRow(d) {
-  const own = isOwner(d.entity_id);
-  return `<div class="iv-doc"><span class="kico">${ICON.notes}</span><div class="tmain"><button class="linkbtn iv-doc-t" data-act="inv-doc-open" data-id="${d.id}">${esc(d.title)}</button><small class="faint">${DOC_ONE[d.kind]}${d.period ? " · " + monthLabel(d.period, true) : ""} · added ${ago(d.created_at)}${d.size_bytes ? ` · ${Math.max(1, Math.round(d.size_bytes / 1024))} KB` : ""}</small></div>
+  const own = canEdit(d.entity_id) && !d._linked;
+  return `<div class="iv-doc"><span class="kico">${ICON.notes}</span><div class="tmain"><button class="linkbtn iv-doc-t" data-act="inv-doc-open" data-id="${d.id}">${esc(d.title)}</button><small class="faint">${DOC_ONE[d.kind]}${d._linked ? ` · from ${esc(d._src || "main entity")}` : ""}${d.period ? " · " + monthLabel(d.period, true) : ""} · added ${ago(d.created_at)}${d.size_bytes ? ` · ${Math.max(1, Math.round(d.size_bytes / 1024))} KB` : ""}</small></div>
     ${own ? `<button class="iconbtn sm sw-del" data-act="inv-doc-del" data-id="${d.id}" aria-label="Delete document">${ICON.trash}</button>` : ""}</div>`;
 }
 function docsTab(f, owner) {
@@ -296,15 +300,15 @@ function settingsTab(f, owner) {
     <section class="sw-sect iv-panel"><div class="sw-sect-h"><h2>Partners & investors</h2><button class="btn sm" data-act="inv-investor" data-entity="${e.id}">${ICON.plus}Add</button></div>
       ${f.ins.length ? `<div class="iv-docs">${f.per.map(p => `<div class="iv-doc click" data-act="inv-investor" data-id="${p.x.id}" data-entity="${e.id}" role="button" tabindex="0"><div class="tmain"><b>${esc(p.x.name)}</b>${p.x.is_me ? ` <span class="chip">Me</span>` : ""}<small class="faint">${p.cap ? `${moneyFull(p.x.amount, cur)} · ${p.share}% of capital` : "No capital"}${p.equity !== null ? ` · ${p.equity}% equity` : ""}</small></div><span class="faint">Edit</span></div>`).join("")}</div>` : `<p class="hint">No investors yet.</p>`}
       <h2 class="iv-h2">Shared with</h2>
-      <p class="hint">People you add here can see this entity only — read-only. They can't see your other entities, workspaces or Finance. If they haven't signed up yet, they get access as soon as they do.</p>
-      ${mem ? `<div class="iv-docs">${mem.map(m => `<div class="iv-doc"><div class="tmain"><b>${esc(m.display_name || m.email)}</b><small class="faint">${esc(m.email)} · ${m.role === "owner" ? "Owner" : "View only"}</small></div>${m.role === "viewer" ? `<button class="btn sm danger" data-act="inv-unshare" data-entity="${e.id}" data-user="${m.user_id}">Remove</button>` : ""}</div>`).join("")}
-        ${pend.map(p => `<div class="iv-doc"><div class="tmain"><b>${esc(p.email)}</b><small class="faint">Invited · gets view-only access when they sign up</small></div><button class="btn sm danger" data-act="inv-uninvite" data-entity="${e.id}" data-email="${esc(p.email)}">Cancel</button></div>`).join("")}</div>` : `<p class="hint">Loading…</p>`}
-      <form class="iv-share" id="inv-share-form" data-id="${e.id}"><input class="input" type="email" name="email" placeholder="partner@email.com" required autocomplete="off"><button class="btn">Share</button></form>
+      <p class="hint">People you add here see this entity only. View only = read; Can edit = add returns, sales and documents. They can't see your other entities, workspaces or Finance. If they haven't signed up yet, they get access as soon as they do.</p>
+      ${mem ? `<div class="iv-docs">${mem.map(m => `<div class="iv-doc"><div class="tmain"><b>${esc(m.display_name || m.email)}</b><small class="faint">${esc(m.email)} · ${ROLE[m.role] || m.role}</small></div>${m.role !== "owner" ? `<button class="btn sm danger" data-act="inv-unshare" data-entity="${e.id}" data-user="${m.user_id}">Remove</button>` : ""}</div>`).join("")}
+        ${pend.map(p => `<div class="iv-doc"><div class="tmain"><b>${esc(p.email)}</b><small class="faint">Invited · ${p.role === "editor" ? "can edit" : "view only"} when they sign up</small></div><button class="btn sm danger" data-act="inv-uninvite" data-entity="${e.id}" data-email="${esc(p.email)}">Cancel</button></div>`).join("")}</div>` : `<p class="hint">Loading…</p>`}
+      <form class="iv-share" id="inv-share-form" data-id="${e.id}"><input class="input" type="email" name="email" placeholder="partner@email.com" required autocomplete="off"><select class="input" name="role" aria-label="Access"><option value="viewer">View only</option><option value="editor">Can edit</option></select><button class="btn">Share</button></form>
     </section></div>
     <section class="sw-sect iv-danger"><h2>Delete entity</h2><p class="hint">Deletes this entity with all its investors, sales, returns and documents, for everyone it's shared with.</p><button class="btn danger" data-act="inv-delete" data-id="${e.id}">${ICON.trash}Delete entity</button></section>`;
 }
 async function loadMembers(id) {
-  const [r, p] = await Promise.all([run(sb.rpc("inv_member_list", { p_entity: id })), run(sb.from("inv_pending_invites").select("email, created_at").eq("entity_id", id))]);
+  const [r, p] = await Promise.all([run(sb.rpc("inv_member_list", { p_entity: id })), run(sb.from("inv_pending_invites").select("email, role, created_at").eq("entity_id", id))]);
   inv.ui.memberList = { id, rows: r.data || [], pending: p.data || [] }; rerenderPage();
 }
 
@@ -669,10 +673,10 @@ export async function handleInvSubmit(form) {
   }
   if (form.id === "inv-share-form") {
     const b = form.querySelector("button"); busy(b, true, "Sharing…");
-    const r = await run(sb.rpc("inv_add_viewer", { p_entity: form.dataset.id, p_email: form.elements.email.value }));
+    const r = await run(sb.rpc("inv_add_viewer", { p_entity: form.dataset.id, p_email: form.elements.email.value, p_role: form.elements.role.value }));
     busy(b, false);
     if (r.error) { toastError(/not_registered/.test(r.raw && r.raw.message || r.error) ? "No J. Desk account with that email. Ask them to sign up first, then share again." : r.error); return true; }
-    inv.ui.memberList = null; await loadInv(true); toast(r.data.pending ? `Invited ${r.data.email} — they'll get access when they sign up` : `Shared with ${r.data.email} (view only)`); return true;
+    inv.ui.memberList = null; await loadInv(true); toast(r.data.pending ? `Invited ${r.data.email} — they'll get access when they sign up` : `Shared with ${r.data.email} (${r.data.role === "editor" ? "can edit" : "view only"})`); return true;
   }
   return false;
 }

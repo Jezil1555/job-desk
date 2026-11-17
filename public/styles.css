@@ -1098,7 +1098,7 @@ a.sw-tr:hover { background: var(--surface-2); text-decoration: none; }
 .iv-form { display: grid; gap: 10px; }
 .iv-form .btn { justify-self: start; }
 .iv-h2 { margin-top: 18px !important; }
-.iv-share { display: flex; gap: 8px; margin-top: 8px; } .iv-share .input { flex: 1; }
+.iv-share { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; } .iv-share .input { flex: 1 1 180px; } .iv-share select.input { flex: 0 0 auto; width: auto; }
 .iv-danger { border: 1px solid var(--bad-soft); border-radius: var(--r-lg); padding: 14px; }
 .iv-retlines { display: grid; gap: 8px; }
 .iv-retline { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 10px; align-items: center; }
